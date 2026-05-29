@@ -29,6 +29,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
@@ -47,6 +50,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -104,6 +108,16 @@ fun BrowserScreen(
     val downloads by viewModel.downloads.collectAsStateWithLifecycle()
     val extensions by viewModel.extensions.collectAsStateWithLifecycle()
     val enabledExtensions by viewModel.enabledExtensions.collectAsStateWithLifecycle()
+
+    val tabs by viewModel.tabs.collectAsStateWithLifecycle()
+    val activeTabId by viewModel.activeTabId.collectAsStateWithLifecycle()
+    val isFindInPageActive by viewModel.isFindInPageActive.collectAsStateWithLifecycle()
+    val findInPageQuery by viewModel.findInPageQuery.collectAsStateWithLifecycle()
+    val isReadingModeActive by viewModel.isReadingModeActive.collectAsStateWithLifecycle()
+    val readingContent by viewModel.readingContent.collectAsStateWithLifecycle()
+    val zoomLevel by viewModel.zoomLevel.collectAsStateWithLifecycle()
+    val recentlyClosedTabs by viewModel.recentlyClosedTabs.collectAsStateWithLifecycle()
+    val defaultSearchEngine by viewModel.defaultSearchEngine.collectAsStateWithLifecycle()
 
     var webViewInstance by remember { mutableStateOf<WebView?>(null) }
     var addressInput by remember { mutableStateOf(currentUrl) }
@@ -299,6 +313,178 @@ fun BrowserScreen(
                     }
                 }
             )
+
+            // Dynamic Tab Bar Row
+            val activeTabInstance = tabs.find { it.id == activeTabId }
+            val isIncognitoThemeActive = activeTabInstance?.isIncognito == true
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(if (isIncognitoThemeActive) Color(0xFF241533) else Color(0xFF131315))
+                    .padding(horizontal = 16.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                tabs.forEach { tab ->
+                    val isActive = tab.id == activeTabId
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(
+                                if (isActive) {
+                                    if (tab.isIncognito) Color(0xFF4C2A72) else Color(0xFF2C2C30)
+                                } else {
+                                    Color.Transparent
+                                }
+                            )
+                            .border(
+                                1.dp,
+                                if (isActive) {
+                                    if (tab.isIncognito) Color(0xFFBB86FC) else Color(0xFFFF9800)
+                                } else {
+                                    Color(0xFF2C2C30)
+                                },
+                                RoundedCornerShape(8.dp)
+                            )
+                            .clickable { viewModel.selectTab(tab.id) }
+                            .padding(horizontal = 12.dp, vertical = 6.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            if (tab.isIncognito) {
+                                Icon(
+                                    imageVector = Icons.Default.VisibilityOff,
+                                    contentDescription = "Incognito Tab Indicator",
+                                    tint = Color(0xFFCE93D8),
+                                    modifier = Modifier.size(14.dp)
+                                )
+                            }
+                            Text(
+                                text = if (tab.title.length > 20) tab.title.take(17) + "..." else tab.title,
+                                color = if (isActive) Color.White else Color.Gray,
+                                fontSize = 12.sp,
+                                fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal
+                            )
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Close Tab Control",
+                                tint = if (isActive) Color.White else Color.Gray,
+                                modifier = Modifier
+                                    .size(14.dp)
+                                    .clickable { viewModel.closeTab(tab.id) }
+                            )
+                        }
+                    }
+                }
+                
+                IconButton(
+                    onClick = { viewModel.createNewTab() },
+                    modifier = Modifier.size(32.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Add,
+                        contentDescription = "Create New Browsing Tab",
+                        tint = Color.LightGray,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            }
+
+            // Find In Page Bar Panel
+            if (isFindInPageActive) {
+                var localMatchText by remember { mutableStateOf("0/0") }
+                
+                LaunchedEffect(findInPageQuery, webViewInstance) {
+                    webViewInstance?.setFindListener { activeMatchOrdinal, numberOfMatches, isDoneCounting ->
+                        localMatchText = if (numberOfMatches > 0) {
+                            "${activeMatchOrdinal + 1}/$numberOfMatches"
+                        } else {
+                            "0/0"
+                        }
+                    }
+                    if (findInPageQuery.isNotEmpty()) {
+                        webViewInstance?.findAllAsync(findInPageQuery)
+                    } else {
+                        webViewInstance?.clearMatches()
+                        localMatchText = "0/0"
+                    }
+                }
+
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(52.dp),
+                    color = Color(0xFF28282B),
+                    tonalElevation = 4.dp
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = 16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Search,
+                            contentDescription = "Find Icon indicator",
+                            tint = Color.LightGray,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        
+                        BasicTextField(
+                            value = findInPageQuery,
+                            onValueChange = { viewModel.updateFindInPageQuery(it) },
+                            textStyle = TextStyle(color = Color.White, fontSize = 14.sp),
+                            cursorBrush = SolidColor(Color(0xFFFF9800)),
+                            modifier = Modifier
+                                .weight(1f)
+                                .focusProperties { canFocus = !cursorMode }
+                        )
+
+                        Text(
+                            text = localMatchText,
+                            color = Color.LightGray,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+
+                        IconButton(
+                            onClick = { webViewInstance?.findNext(false) },
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.KeyboardArrowUp,
+                                contentDescription = "Query Previous Match",
+                                tint = Color.White
+                            )
+                        }
+
+                        IconButton(
+                            onClick = { webViewInstance?.findNext(true) },
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.KeyboardArrowDown,
+                                contentDescription = "Query Next Match",
+                                tint = Color.White
+                            )
+                        }
+
+                        IconButton(
+                            onClick = { viewModel.setFindInPageActive(false) },
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Close Find Query Bar",
+                                tint = Color.LightGray
+                            )
+                        }
+                    }
+                }
+            }
 
             // Web Loading Progress indicator strip
             if (isLoading) {
@@ -522,7 +708,191 @@ fun BrowserScreen(
                             onInstallFromUrl = { url -> viewModel.installExtensionFromUrl(url) },
                             viewModel = viewModel
                         )
+                        BrowserViewModel.MenuType.CHROME_MENU -> ChromeMenu(
+                            currentUrl = currentUrl,
+                            canGoForward = canGoForward,
+                            isBookmarked = bookmarks.any { it.url == currentUrl },
+                            isDesktopActive = tabs.find { it.id == activeTabId }?.isDesktop == true,
+                            onForward = {
+                                webViewInstance?.goForward()
+                                viewModel.toggleMenu(null)
+                            },
+                            onBookmarkToggle = {
+                                viewModel.toggleBookmark(currentUrl, pageTitle)
+                                viewModel.toggleMenu(null)
+                            },
+                            onDownloadTrigger = {
+                                webViewInstance?.url?.let { viewModel.startFileDownload(it, null, null, null) }
+                                viewModel.toggleMenu(null)
+                            },
+                            onRefresh = {
+                                webViewInstance?.reload()
+                                viewModel.toggleMenu(null)
+                            },
+                            onNewTab = {
+                                viewModel.createNewTab()
+                                viewModel.toggleMenu(null)
+                            },
+                            onNewIncognitoTab = {
+                                viewModel.createNewTab(isIncognito = true)
+                                viewModel.toggleMenu(null)
+                            },
+                            onAddTabGroup = {
+                                val activeTab = tabs.find { it.id == activeTabId }
+                                activeTab?.let { viewModel.addTabToNewGroup(it.id, "Group Alpha") }
+                                android.widget.Toast.makeText(context, "Added active tab to \"Group Alpha\" group.", android.widget.Toast.LENGTH_SHORT).show()
+                                viewModel.toggleMenu(null)
+                            },
+                            onHistory = { viewModel.toggleMenu(BrowserViewModel.MenuType.HISTORY) },
+                            onDeleteData = {
+                                viewModel.clearAllHistory()
+                                webViewInstance?.clearCache(true)
+                                android.webkit.CookieManager.getInstance().removeAllCookies(null)
+                                android.widget.Toast.makeText(context, "Cleared all browsing data, caches, and session cookies.", android.widget.Toast.LENGTH_LONG).show()
+                                viewModel.toggleMenu(null)
+                            },
+                            onDownloads = { viewModel.toggleMenu(BrowserViewModel.MenuType.DOWNLOADS) },
+                            onBookmarks = { viewModel.toggleMenu(BrowserViewModel.MenuType.BOOKMARKS) },
+                            onRecentTabs = { viewModel.toggleMenu(BrowserViewModel.MenuType.RECENT_TABS) },
+                            onShare = {
+                                val intent = Intent(Intent.ACTION_SEND).apply {
+                                    type = "text/plain"
+                                    putExtra(Intent.EXTRA_TEXT, currentUrl)
+                                }
+                                context.startActivity(Intent.createChooser(intent, "Share link"))
+                                viewModel.toggleMenu(null)
+                            },
+                            onFindInPage = {
+                                viewModel.setFindInPageActive(true)
+                                viewModel.toggleMenu(null)
+                            },
+                            onTranslate = {
+                                val encoded = android.net.Uri.encode(currentUrl)
+                                viewModel.loadUrl("https://translate.google.com/translate?sl=auto&tl=en&u=$encoded")
+                                viewModel.toggleMenu(null)
+                            },
+                            onReadingMode = {
+                                webViewInstance?.evaluateJavascript(
+                                    "(function() { " +
+                                    "  var text = ''; " +
+                                    "  var el = document.querySelectorAll('p, h1, h2, h3'); " +
+                                    "  for (var i = 0; i < el.length; i++) { " +
+                                    "    text += el[i].innerText + '\\n\\n'; " +
+                                    "  } " +
+                                    "  return text || document.body.innerText; " +
+                                    "})()"
+                                ) { res ->
+                                    val decoded = res?.trim('"')
+                                        ?.replace("\\n", "\n")
+                                        ?.replace("\\\"", "\"")
+                                    viewModel.toggleReadingMode(true, decoded ?: "")
+                                }
+                                viewModel.toggleMenu(null)
+                            },
+                            onAddToHome = {
+                                android.widget.Toast.makeText(context, "Added shortcut for \"$pageTitle\" to home screen feed.", android.widget.Toast.LENGTH_SHORT).show()
+                                viewModel.toggleMenu(null)
+                            },
+                            onDesktopToggle = {
+                                viewModel.toggleDesktopSiteForActiveTab()
+                                viewModel.toggleMenu(null)
+                            },
+                            onSettings = { viewModel.toggleMenu(BrowserViewModel.MenuType.SETTINGS_PANEL) },
+                            onHelpFeedback = { viewModel.toggleMenu(BrowserViewModel.MenuType.HELP_FEEDBACK) }
+                        )
+                        BrowserViewModel.MenuType.SETTINGS_PANEL -> SettingsPanel(
+                            currentEngine = defaultSearchEngine,
+                            currentZoom = zoomLevel,
+                            adBlockActive = isAdBlockEnabled,
+                            onEngineSelect = { viewModel.setDefaultSearchEngine(it) },
+                            onZoomSelect = {
+                                viewModel.setZoomLevel(it)
+                                webViewInstance?.settings?.textZoom = it
+                            },
+                            onAdBlockToggle = { viewModel.toggleAdBlock() },
+                            onBackToMenu = { viewModel.toggleMenu(BrowserViewModel.MenuType.CHROME_MENU) }
+                        )
+                        BrowserViewModel.MenuType.RECENT_TABS -> RecentTabsPanel(
+                            closedTabs = recentlyClosedTabs,
+                            onTabClick = { url ->
+                                viewModel.loadUrl(url)
+                                viewModel.toggleMenu(null)
+                            },
+                            onBackToMenu = { viewModel.toggleMenu(BrowserViewModel.MenuType.CHROME_MENU) }
+                        )
+                        BrowserViewModel.MenuType.HELP_FEEDBACK -> HelpFeedbackPanel(
+                            onBackToMenu = { viewModel.toggleMenu(BrowserViewModel.MenuType.CHROME_MENU) }
+                        )
                         else -> {}
+                    }
+                }
+            }
+        }
+
+        // 4b. Reading Mode Overlay
+        if (isReadingModeActive) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color(0xFF151518))
+                    .padding(28.dp)
+                    .clickable {}, // Consume clicks
+                contentAlignment = Alignment.TopStart
+            ) {
+                Column(modifier = Modifier.fillMaxSize()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 20.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "📖 Reader View",
+                            fontSize = 20.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFFFF9800)
+                        )
+                        IconButton(
+                            onClick = { viewModel.toggleReadingMode(false) },
+                            modifier = Modifier.background(Color(0xFF333333), CircleShape)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Exit Reader View",
+                                tint = Color.White
+                            )
+                        }
+                    }
+
+                    LazyColumn(
+                        modifier = Modifier.weight(1f).fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        item {
+                            Text(
+                                text = pageTitle,
+                                fontSize = 24.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = Color.White,
+                                modifier = Modifier.padding(bottom = 8.dp)
+                            )
+                            Text(
+                                text = "Source: $currentUrl",
+                                fontSize = 12.sp,
+                                color = Color.Gray,
+                                modifier = Modifier.padding(bottom = 16.dp)
+                            )
+                        }
+                        
+                        item {
+                            val content = readingContent.ifEmpty { "Extracting content from page... Please wait." }
+                            Text(
+                                text = content,
+                                fontSize = 16.sp,
+                                color = Color(0xFFE2E2E5),
+                                lineHeight = 26.sp,
+                                modifier = Modifier.padding(bottom = 40.dp)
+                            )
+                        }
                     }
                 }
             }
@@ -745,6 +1115,15 @@ fun NavigationBarRow(
                 contentDescription = "Downloads list Panel",
                 enabled = true,
                 onClick = { onMenuSelect(BrowserViewModel.MenuType.DOWNLOADS) },
+                cursorEnabled = cursorEnabled
+            )
+
+            // Chrome More Options Overflow Menu
+            NavigationIconButton(
+                icon = Icons.Default.MoreVert,
+                contentDescription = "Chrome Menu Options",
+                enabled = true,
+                onClick = { onMenuSelect(BrowserViewModel.MenuType.CHROME_MENU) },
                 cursorEnabled = cursorEnabled
             )
         }
@@ -1455,5 +1834,436 @@ fun ExtensionCardItem(
                 }
             }
         }
+    }
+}
+
+@Composable
+fun ChromeMenu(
+    currentUrl: String,
+    canGoForward: Boolean,
+    isBookmarked: Boolean,
+    isDesktopActive: Boolean,
+    onForward: () -> Unit,
+    onBookmarkToggle: () -> Unit,
+    onDownloadTrigger: () -> Unit,
+    onRefresh: () -> Unit,
+    onNewTab: () -> Unit,
+    onNewIncognitoTab: () -> Unit,
+    onAddTabGroup: () -> Unit,
+    onHistory: () -> Unit,
+    onDeleteData: () -> Unit,
+    onDownloads: () -> Unit,
+    onBookmarks: () -> Unit,
+    onRecentTabs: () -> Unit,
+    onShare: () -> Unit,
+    onFindInPage: () -> Unit,
+    onTranslate: () -> Unit,
+    onReadingMode: () -> Unit,
+    onAddToHome: () -> Unit,
+    onDesktopToggle: () -> Unit,
+    onSettings: () -> Unit,
+    onHelpFeedback: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        // Quick Actions Row
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 12.dp)
+                .background(Color(0xFF28282B), RoundedCornerShape(8.dp))
+                .padding(6.dp),
+            horizontalArrangement = Arrangement.SpaceAround,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = onForward, enabled = canGoForward) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                    contentDescription = "Go Forward",
+                    tint = if (canGoForward) Color.White else Color.Gray
+                )
+            }
+            IconButton(onClick = onBookmarkToggle) {
+                Icon(
+                    imageVector = Icons.Default.Star,
+                    contentDescription = "Bookmark Page",
+                    tint = if (isBookmarked) Color(0xFFFFD54F) else Color.White
+                )
+            }
+            IconButton(onClick = onDownloadTrigger) {
+                Icon(
+                    imageVector = Icons.Default.FileDownload,
+                    contentDescription = "Download Link",
+                    tint = Color.White
+                )
+            }
+            IconButton(onClick = { /* Display secure protocol badge info */ }) {
+                Icon(
+                    imageVector = Icons.Default.Info,
+                    contentDescription = "Page Info",
+                    tint = Color.White
+                )
+            }
+            IconButton(onClick = onRefresh) {
+                Icon(
+                    imageVector = Icons.Default.Refresh,
+                    contentDescription = "Reload Page",
+                    tint = Color.White
+                )
+            }
+        }
+
+        HorizontalDivider(color = Color(0xFF323236), thickness = 1.dp, modifier = Modifier.padding(bottom = 12.dp))
+
+        // Actions List
+        ChromeMenuItem(icon = Icons.Default.AddBox, label = "New tab", onClick = onNewTab)
+        ChromeMenuItem(icon = Icons.Default.VisibilityOff, label = "New Incognito tab", labelColor = Color(0xFFFFB74D), onClick = onNewIncognitoTab)
+        ChromeMenuItem(icon = Icons.Default.DynamicFeed, label = "Add tab to new group", onClick = onAddTabGroup)
+        
+        HorizontalDivider(color = Color(0xFF2C2C2F), thickness = 1.dp, modifier = Modifier.padding(vertical = 4.dp))
+        
+        ChromeMenuItem(icon = Icons.Default.History, label = "History", onClick = onHistory)
+        ChromeMenuItem(icon = Icons.Default.DeleteForever, label = "Clear browsing data", onClick = onDeleteData)
+        ChromeMenuItem(icon = Icons.Default.Download, label = "Downloads", onClick = onDownloads)
+        ChromeMenuItem(icon = Icons.Default.Bookmarks, label = "Bookmarks", onClick = onBookmarks)
+        ChromeMenuItem(icon = Icons.Default.Restore, label = "Recent tabs", onClick = onRecentTabs)
+
+        HorizontalDivider(color = Color(0xFF2C2C2F), thickness = 1.dp, modifier = Modifier.padding(vertical = 4.dp))
+
+        ChromeMenuItem(icon = Icons.Default.Share, label = "Share...", onClick = onShare)
+        ChromeMenuItem(icon = Icons.Default.FindInPage, label = "Find in page", onClick = onFindInPage)
+        ChromeMenuItem(icon = Icons.Default.Translate, label = "Translate...", onClick = onTranslate)
+        ChromeMenuItem(icon = Icons.Default.MenuBook, label = "Show Reading mode", onClick = onReadingMode)
+        ChromeMenuItem(icon = Icons.Default.AddToHomeScreen, label = "Add to Home screen", onClick = onAddToHome)
+        
+        // Desktop version toggle with checkbox
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(8.dp))
+                .clickable { onDesktopToggle() }
+                .padding(vertical = 12.dp, horizontal = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Laptop,
+                    contentDescription = "Desktop site option",
+                    tint = Color.LightGray,
+                    modifier = Modifier.size(20.dp)
+                )
+                Text(
+                    text = "Desktop site",
+                    color = Color.White,
+                    fontSize = 15.sp
+                )
+            }
+            Checkbox(
+                checked = isDesktopActive,
+                onCheckedChange = { onDesktopToggle() },
+                colors = CheckboxDefaults.colors(
+                    checkedColor = Color(0xFFFF9800),
+                    uncheckedColor = Color.LightGray
+                )
+            )
+        }
+
+        HorizontalDivider(color = Color(0xFF2C2C2F), thickness = 1.dp, modifier = Modifier.padding(vertical = 4.dp))
+
+        ChromeMenuItem(icon = Icons.Default.Settings, label = "Settings", onClick = onSettings)
+        ChromeMenuItem(icon = Icons.Default.Help, label = "Help & feedback", onClick = onHelpFeedback)
+    }
+}
+
+@Composable
+fun ChromeMenuItem(
+    icon: ImageVector,
+    label: String,
+    labelColor: Color = Color.White,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .clickable { onClick() }
+            .padding(vertical = 12.dp, horizontal = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = label,
+            tint = if (labelColor == Color.White) Color.LightGray else labelColor,
+            modifier = Modifier.size(20.dp)
+        )
+        Text(
+            text = label,
+            color = labelColor,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.Medium
+        )
+    }
+}
+
+@Composable
+fun SettingsPanel(
+    currentEngine: String,
+    currentZoom: Int,
+    adBlockActive: Boolean,
+    onEngineSelect: (String) -> Unit,
+    onZoomSelect: (Int) -> Unit,
+    onAdBlockToggle: () -> Unit,
+    onBackToMenu: () -> Unit
+) {
+    Column(modifier = Modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(bottom = 20.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            IconButton(onClick = onBackToMenu) {
+                Icon(
+                    imageVector = Icons.Default.ArrowBack,
+                    contentDescription = "Back to menu",
+                    tint = Color.White
+                )
+            }
+            Text(
+                text = "Settings",
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color.White
+            )
+        }
+
+        LazyColumn(
+            modifier = Modifier.weight(1f).fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(20.dp)
+        ) {
+            item {
+                Text(
+                    text = "Basics",
+                    color = Color(0xFFFF9800),
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+            }
+
+            item {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        text = "Search engine",
+                        color = Color.White,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    listOf("Google" to "https://www.google.com/search?q=", "Bing" to "https://www.bing.com/search?q=", "DuckDuckGo" to "https://duckduckgo.com/?q=", "Yahoo" to "https://search.yahoo.com/search?p=").forEach { (name, url) ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onEngineSelect(url) }
+                                .padding(vertical = 10.dp, horizontal = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(text = name, color = Color.LightGray, fontSize = 14.sp)
+                            RadioButton(
+                                selected = currentEngine == url,
+                                onClick = { onEngineSelect(url) },
+                                colors = RadioButtonDefaults.colors(selectedColor = Color(0xFFFF9800))
+                            )
+                        }
+                    }
+                }
+            }
+
+            item { HorizontalDivider(color = Color(0xFF323236)) }
+
+            item {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        text = "Page zoom (" + currentZoom + "%)",
+                        color = Color.White,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    listOf(75, 100, 125, 150, 175, 200).forEach { zoom ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onZoomSelect(zoom) }
+                                .padding(vertical = 10.dp, horizontal = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(text = "$zoom%", color = Color.LightGray, fontSize = 14.sp)
+                            RadioButton(
+                                selected = currentZoom == zoom,
+                                onClick = { onZoomSelect(zoom) },
+                                colors = RadioButtonDefaults.colors(selectedColor = Color(0xFFFF9800))
+                            )
+                        }
+                    }
+                }
+            }
+
+            item { HorizontalDivider(color = Color(0xFF323236)) }
+
+            item {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onAdBlockToggle() }
+                        .padding(vertical = 12.dp, horizontal = 4.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text(text = "Ad Shield", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                        Text(text = "Block popups & commercial banners", color = Color.Gray, fontSize = 12.sp)
+                    }
+                    Switch(
+                        checked = adBlockActive,
+                        onCheckedChange = { onAdBlockToggle() },
+                        colors = SwitchDefaults.colors(checkedThumbColor = Color(0xFFFF9800))
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun RecentTabsPanel(
+    closedTabs: List<Pair<String, String>>,
+    onTabClick: (String) -> Unit,
+    onBackToMenu: () -> Unit
+) {
+    Column(modifier = Modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(bottom = 20.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            IconButton(onClick = onBackToMenu) {
+                Icon(
+                    imageVector = Icons.Default.ArrowBack,
+                    contentDescription = "Back to menu",
+                    tint = Color.White
+                )
+            }
+            Text(
+                text = "Recently closed",
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color.White
+            )
+        }
+
+        if (closedTabs.isEmpty()) {
+            Box(
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "None found in history session.",
+                    color = Color.Gray,
+                    fontSize = 14.sp
+                )
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                items(closedTabs) { (url, title) ->
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onTabClick(url) }
+                            .padding(8.dp)
+                    ) {
+                        Text(text = title, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                        Text(text = url, color = Color.Gray, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun HelpFeedbackPanel(
+    onBackToMenu: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(bottom = 20.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            IconButton(onClick = onBackToMenu) {
+                Icon(
+                    imageVector = Icons.Default.ArrowBack,
+                    contentDescription = "Back to menu",
+                    tint = Color.White
+                )
+            }
+            Text(
+                text = "Help & feedback",
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color.White
+            )
+        }
+
+        Text(
+            text = "Frequently Asked Questions",
+            color = Color(0xFFFF9800),
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(bottom = 12.dp, top = 8.dp)
+        )
+
+        val faqs = listOf(
+            "How do I use Multi-tab browsing?" to "Tap any open tab in the dark tab bar right below the main search bar, or tap the '+' icon to launch a brand new independent session.",
+            "Can I write or search using voice?" to "Yes, hit the microphone icon in the main top row to trigger the standard prompt dialog.",
+            "What is Web ad shield?" to "It blocks heavy data networks, doubleclick overlays, and tracking scripts dynamically in-line.",
+            "How does Reader mode work?" to "Select 'Show Reading mode' from the Chrome overflow menu. It isolates text elements instantly for high readability distraction-free."
+        )
+
+        faqs.forEach { (q, a) ->
+            Column(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+                Text(text = "Q: $q", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(text = "A: $a", color = Color.LightGray, fontSize = 13.sp)
+            }
+            HorizontalDivider(color = Color(0xFF2C2C2F), thickness = 1.dp, modifier = Modifier.padding(vertical = 4.dp))
+        }
+        
+        Spacer(modifier = Modifier.height(24.dp))
+        Text(
+            text = "Browser Build Info: Version 120.0-ChromeMobileTV-Ready",
+            color = Color.Gray,
+            fontSize = 11.sp,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth()
+        )
     }
 }

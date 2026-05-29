@@ -38,10 +38,47 @@ sealed class InstallState {
     data class Error(val message: String) : InstallState()
 }
 
+data class BrowserTab(
+    val id: String = java.util.UUID.randomUUID().toString(),
+    val url: String = "https://www.google.com",
+    val title: String = "Google",
+    val isIncognito: Boolean = false,
+    val isDesktop: Boolean = false,
+    val groupName: String? = null
+)
+
 class BrowserViewModel(application: Application) : AndroidViewModel(application) {
 
     private val db = BrowserDatabase.getDatabase(application, viewModelScope)
     private val repository = BrowserRepository(db.browserDao())
+
+    // Tabs state list
+    private val _tabs = MutableStateFlow<List<BrowserTab>>(listOf(BrowserTab(id = "default_tab", url = "https://www.google.com", title = "Google")))
+    val tabs: StateFlow<List<BrowserTab>> = _tabs.asStateFlow()
+
+    private val _activeTabId = MutableStateFlow<String>("default_tab")
+    val activeTabId: StateFlow<String> = _activeTabId.asStateFlow()
+
+    private val _defaultSearchEngine = MutableStateFlow("Google") // Google, Bing, Yahoo, DuckDuckGo
+    val defaultSearchEngine: StateFlow<String> = _defaultSearchEngine.asStateFlow()
+
+    private val _zoomLevel = MutableStateFlow(100) // 100, 125, 150, 200
+    val zoomLevel: StateFlow<Int> = _zoomLevel.asStateFlow()
+
+    private val _recentlyClosedTabs = MutableStateFlow<List<Pair<String, String>>>(emptyList())
+    val recentlyClosedTabs: StateFlow<List<Pair<String, String>>> = _recentlyClosedTabs.asStateFlow()
+
+    private val _isFindInPageActive = MutableStateFlow(false)
+    val isFindInPageActive: StateFlow<Boolean> = _isFindInPageActive.asStateFlow()
+
+    private val _findInPageQuery = MutableStateFlow("")
+    val findInPageQuery: StateFlow<String> = _findInPageQuery.asStateFlow()
+
+    private val _isReadingModeActive = MutableStateFlow(false)
+    val isReadingModeActive: StateFlow<Boolean> = _isReadingModeActive.asStateFlow()
+
+    private val _readingContent = MutableStateFlow("")
+    val readingContent: StateFlow<String> = _readingContent.asStateFlow()
 
     // UI state parameters
     private val _currentUrl = MutableStateFlow("https://www.google.com")
@@ -80,7 +117,8 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     val activeMenu: StateFlow<MenuType?> = _activeMenu.asStateFlow()
 
     enum class MenuType {
-        BOOKMARKS, HISTORY, DOWNLOADS, EXTENSIONS, VOICE_SEARCH, AD_BLOCK_STATS
+        BOOKMARKS, HISTORY, DOWNLOADS, EXTENSIONS, VOICE_SEARCH, AD_BLOCK_STATS,
+        CHROME_MENU, SETTINGS_PANEL, RECENT_TABS, HELP_FEEDBACK, TAB_MANAGER
     }
 
     // Room DB StateFlow streams
@@ -126,18 +164,124 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    // Tabs Management functions
+    fun createNewTab(url: String = "https://www.google.com", isIncognito: Boolean = false) {
+        val newId = java.util.UUID.randomUUID().toString()
+        val title = if (isIncognito) "Incognito Tab" else "New Tab"
+        val newTab = BrowserTab(id = newId, url = url, title = title, isIncognito = isIncognito)
+        _tabs.value = _tabs.value + newTab
+        _activeTabId.value = newId
+        _currentUrl.value = url
+        _pageTitle.value = title
+    }
+
+    fun addTabToNewGroup(tabId: String, groupName: String) {
+        _tabs.value = _tabs.value.map {
+            if (it.id == tabId) {
+                it.copy(groupName = groupName)
+            } else {
+                it
+            }
+        }
+    }
+
+    fun selectTab(tabId: String) {
+        val tab = _tabs.value.find { it.id == tabId }
+        if (tab != null) {
+            _activeTabId.value = tabId
+            _currentUrl.value = tab.url
+            _pageTitle.value = tab.title
+        }
+    }
+
+    fun closeTab(tabId: String) {
+        val tabToClose = _tabs.value.find { it.id == tabId }
+        if (tabToClose != null && !tabToClose.isIncognito) {
+            _recentlyClosedTabs.value = (listOf(Pair(tabToClose.url, tabToClose.title)) + _recentlyClosedTabs.value).take(15)
+        }
+
+        val updatedList = _tabs.value.filter { it.id != tabId }
+        if (updatedList.isEmpty()) {
+            _tabs.value = listOf(BrowserTab(id = "default_tab", url = "https://www.google.com", title = "Google"))
+            _activeTabId.value = "default_tab"
+            _currentUrl.value = "https://www.google.com"
+            _pageTitle.value = "Google"
+        } else {
+            _tabs.value = updatedList
+            if (_activeTabId.value == tabId) {
+                val firstTab = updatedList.first()
+                _activeTabId.value = firstTab.id
+                _currentUrl.value = firstTab.url
+                _pageTitle.value = firstTab.title
+            }
+        }
+    }
+
+    fun toggleDesktopSiteForActiveTab() {
+        val activeId = _activeTabId.value
+        _tabs.value = _tabs.value.map {
+            if (it.id == activeId) {
+                it.copy(isDesktop = !it.isDesktop)
+            } else {
+                it
+            }
+        }
+    }
+
+    fun setDefaultSearchEngine(engine: String) {
+        _defaultSearchEngine.value = engine
+    }
+
+    fun setZoomLevel(level: Int) {
+        _zoomLevel.value = level
+    }
+
+    fun setFindInPageActive(active: Boolean) {
+        _isFindInPageActive.value = active
+        if (!active) {
+            _findInPageQuery.value = ""
+        }
+    }
+
+    fun updateFindInPageQuery(query: String) {
+        _findInPageQuery.value = query
+    }
+
+    fun toggleReadingMode(active: Boolean, pageContent: String = "") {
+        _isReadingModeActive.value = active
+        if (active) {
+            _readingContent.value = pageContent
+        } else {
+            _readingContent.value = ""
+        }
+    }
+
     // Navigation and Browser actions
     fun loadUrl(url: String) {
         var cleanUrl = url.trim()
         if (cleanUrl.isEmpty()) return
 
         if (!cleanUrl.startsWith("http://") && !cleanUrl.startsWith("https://")) {
-            // Check if it's a domain search or general Google search
             val isDomain = cleanUrl.contains(".") && !cleanUrl.contains(" ")
             cleanUrl = if (isDomain) {
                 "https://$cleanUrl"
             } else {
-                "https://www.google.com/search?q=${cleanUrl.replace(" ", "+")}"
+                val searchBase = when (_defaultSearchEngine.value) {
+                    "Bing" -> "https://www.bing.com/search?q="
+                    "Yahoo" -> "https://search.yahoo.com/search?p="
+                    "DuckDuckGo" -> "https://duckduckgo.com/?q="
+                    else -> "https://www.google.com/search?q="
+                }
+                searchBase + cleanUrl.replace(" ", "+")
+            }
+        }
+
+        val activeId = _activeTabId.value
+        _tabs.value = _tabs.value.map {
+            if (it.id == activeId) {
+                it.copy(url = cleanUrl)
+            } else {
+                it
             }
         }
         _currentUrl.value = cleanUrl
@@ -149,13 +293,24 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun updateHistoryAndTitle(url: String, title: String) {
-        _currentUrl.value = url
-        _pageTitle.value = if (title.isNotEmpty()) title else URLUtil.guessFileName(url, null, null)
+        val activeId = _activeTabId.value
+        val finalTitle = if (title.isNotEmpty()) title else URLUtil.guessFileName(url, null, null)
         
-        // Add to persistent history
-        viewModelScope.launch(Dispatchers.IO) {
-            repository.addHistoryEntry(HistoryEntry(url = url, title = _pageTitle.value))
+        _tabs.value = _tabs.value.map {
+            if (it.id == activeId) {
+                if (!it.isIncognito) {
+                    viewModelScope.launch(Dispatchers.IO) {
+                        repository.addHistoryEntry(HistoryEntry(url = url, title = finalTitle))
+                    }
+                }
+                it.copy(url = url, title = finalTitle)
+            } else {
+                it
+            }
         }
+
+        _currentUrl.value = url
+        _pageTitle.value = finalTitle
     }
 
     fun setNavigationCapabilities(back: Boolean, forward: Boolean) {
