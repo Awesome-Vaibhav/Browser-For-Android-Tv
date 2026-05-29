@@ -42,8 +42,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
@@ -63,6 +66,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -221,7 +227,8 @@ fun BrowserScreen(
                 }
             }
             .onKeyEvent { keyEvent ->
-                if (activeMenu != null) return@onKeyEvent false
+                val isBackKey = keyEvent.key == Key.Back
+                if (activeMenu != null && !cursorMode && !isBackKey) return@onKeyEvent false
 
                 val isKeyDown = keyEvent.type == KeyEventType.KeyDown
                 if (isKeyDown) {
@@ -650,11 +657,24 @@ fun BrowserScreen(
                         .fillMaxHeight()
                         .width(420.dp)
                         .background(
-                            Brush.horizontalGradient(
-                                colors = listOf(Color(0xFF212124), Color(0xFF1B1B1D))
+                            Brush.linearGradient(
+                                colors = listOf(Color(0xEE1A1A20), Color(0xEE121215))
                             )
                         )
-                        .border(1.dp, Color(0xFF323236), RoundedCornerShape(topStart = 16.dp, bottomStart = 16.dp))
+                        .border(
+                            width = 1.5.dp,
+                            brush = Brush.verticalGradient(
+                                colors = listOf(Color(0xFFFF9800), Color(0xFF673AB7))
+                            ),
+                            shape = RoundedCornerShape(topStart = 20.dp, bottomStart = 20.dp)
+                        )
+                        .shadow(
+                            elevation = 24.dp,
+                            shape = RoundedCornerShape(topStart = 20.dp, bottomStart = 20.dp),
+                            clip = false,
+                            ambientColor = Color(0xFFFF5722),
+                            spotColor = Color(0xFF673AB7)
+                        )
                         .padding(24.dp)
                         .clickable(enabled = false) {}, // Intercept clicks inside menu
                     contentAlignment = Alignment.TopStart
@@ -662,6 +682,9 @@ fun BrowserScreen(
                     when (activeMenu) {
                         BrowserViewModel.MenuType.BOOKMARKS -> BookmarksMenu(
                             bookmarks = bookmarks,
+                            cursorX = cursorX,
+                            cursorY = cursorY,
+                            density = density.density,
                             onBookmarkClick = {
                                 viewModel.loadUrl(it.url)
                                 viewModel.toggleMenu(null)
@@ -670,6 +693,9 @@ fun BrowserScreen(
                         )
                         BrowserViewModel.MenuType.HISTORY -> HistoryMenu(
                             history = historyEntries,
+                            cursorX = cursorX,
+                            cursorY = cursorY,
+                            density = density.density,
                             onHistoryClick = {
                                 viewModel.loadUrl(it.url)
                                 viewModel.toggleMenu(null)
@@ -679,6 +705,9 @@ fun BrowserScreen(
                         )
                         BrowserViewModel.MenuType.DOWNLOADS -> DownloadsMenu(
                             downloads = downloads,
+                            cursorX = cursorX,
+                            cursorY = cursorY,
+                            density = density.density,
                             onCancel = { viewModel.cancelDownload(it) },
                             onOpen = { path ->
                                 try {
@@ -696,6 +725,9 @@ fun BrowserScreen(
                             extensions = extensions,
                             currentUrl = currentUrl,
                             installState = viewModel.installExtensionState.collectAsStateWithLifecycle().value,
+                            cursorX = cursorX,
+                            cursorY = cursorY,
+                            density = density.density,
                             onToggle = { viewModel.toggleExtension(it) },
                             onDelete = { viewModel.deleteExtension(it) },
                             onAddExtension = { name, desc, code ->
@@ -713,6 +745,9 @@ fun BrowserScreen(
                             canGoForward = canGoForward,
                             isBookmarked = bookmarks.any { it.url == currentUrl },
                             isDesktopActive = tabs.find { it.id == activeTabId }?.isDesktop == true,
+                            cursorX = cursorX,
+                            cursorY = cursorY,
+                            density = density.density,
                             onForward = {
                                 webViewInstance?.goForward()
                                 viewModel.toggleMenu(null)
@@ -804,6 +839,9 @@ fun BrowserScreen(
                             currentEngine = defaultSearchEngine,
                             currentZoom = zoomLevel,
                             adBlockActive = isAdBlockEnabled,
+                            cursorX = cursorX,
+                            cursorY = cursorY,
+                            density = density.density,
                             onEngineSelect = { viewModel.setDefaultSearchEngine(it) },
                             onZoomSelect = {
                                 viewModel.setZoomLevel(it)
@@ -814,6 +852,9 @@ fun BrowserScreen(
                         )
                         BrowserViewModel.MenuType.RECENT_TABS -> RecentTabsPanel(
                             closedTabs = recentlyClosedTabs,
+                            cursorX = cursorX,
+                            cursorY = cursorY,
+                            density = density.density,
                             onTabClick = { url ->
                                 viewModel.loadUrl(url)
                                 viewModel.toggleMenu(null)
@@ -821,6 +862,9 @@ fun BrowserScreen(
                             onBackToMenu = { viewModel.toggleMenu(BrowserViewModel.MenuType.CHROME_MENU) }
                         )
                         BrowserViewModel.MenuType.HELP_FEEDBACK -> HelpFeedbackPanel(
+                            cursorX = cursorX,
+                            cursorY = cursorY,
+                            density = density.density,
                             onBackToMenu = { viewModel.toggleMenu(BrowserViewModel.MenuType.CHROME_MENU) }
                         )
                         else -> {}
@@ -911,17 +955,39 @@ fun BrowserScreen(
                             cursorYOffset.roundToPx()
                         )
                     }
-                    .size(28.dp)
+                    .size(40.dp)
             ) {
-                // Styled highly-visible arrow pointer
+                // Radiant outer cosmic glowing aura that breathes
+                Box(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .align(Alignment.Center)
+                        .background(
+                            Brush.radialGradient(
+                                colors = listOf(
+                                    Color(0xFFFF9800).copy(alpha = 0.45f),
+                                    Color(0xFFCE93D8).copy(alpha = 0.15f),
+                                    Color.Transparent
+                                )
+                            )
+                        )
+                )
+                
+                // Futuristic neon glowing pointer
                 Icon(
                     imageVector = Icons.Default.Navigation,
                     contentDescription = "Virtual Cursor",
                     tint = Color(0xFFFF5722),
                     modifier = Modifier
                         .rotate(315f)
-                        .size(28.dp)
-                        .shadow(8.dp, CircleShape)
+                        .size(26.dp)
+                        .align(Alignment.Center)
+                        .shadow(
+                            elevation = 12.dp,
+                            shape = CircleShape,
+                            ambientColor = Color(0xFFFF5722),
+                            spotColor = Color(0xFFFF9800)
+                        )
                 )
             }
         }
@@ -1178,6 +1244,9 @@ fun NavigationIconButton(
 @Composable
 fun BookmarksMenu(
     bookmarks: List<Bookmark>,
+    cursorX: Float = 0f,
+    cursorY: Float = 0f,
+    density: Float = 1f,
     onBookmarkClick: (Bookmark) -> Unit,
     onDelete: (Bookmark) -> Unit
 ) {
@@ -1210,6 +1279,9 @@ fun BookmarksMenu(
                     BookmarkHistoryItem(
                         title = bookmark.title,
                         url = bookmark.url,
+                        cursorX = cursorX,
+                        cursorY = cursorY,
+                        density = density,
                         onClick = { onBookmarkClick(bookmark) },
                         onDelete = { onDelete(bookmark) }
                     )
@@ -1223,6 +1295,9 @@ fun BookmarksMenu(
 @Composable
 fun HistoryMenu(
     history: List<HistoryEntry>,
+    cursorX: Float = 0f,
+    cursorY: Float = 0f,
+    density: Float = 1f,
     onHistoryClick: (HistoryEntry) -> Unit,
     onDelete: (id: Long) -> Unit,
     onClearAll: () -> Unit
@@ -1241,13 +1316,15 @@ fun HistoryMenu(
             )
 
             if (history.isNotEmpty()) {
-                Button(
-                    onClick = onClearAll,
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD32F2F)),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-                    shape = RoundedCornerShape(8.dp)
-                ) {
-                    Text("Clear All", color = Color.White, fontSize = 11.sp)
+                Box(modifier = Modifier.cursorHoverEffect(cursorX, cursorY, density, RoundedCornerShape(8.dp))) {
+                    Button(
+                        onClick = onClearAll,
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD32F2F)),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text("Clear All", color = Color.White, fontSize = 11.sp)
+                    }
                 }
             }
         }
@@ -1272,6 +1349,9 @@ fun HistoryMenu(
                     BookmarkHistoryItem(
                         title = entry.title,
                         url = entry.url,
+                        cursorX = cursorX,
+                        cursorY = cursorY,
+                        density = density,
                         onClick = { onHistoryClick(entry) },
                         onDelete = { onDelete(entry.id) }
                     )
@@ -1286,6 +1366,9 @@ fun HistoryMenu(
 fun BookmarkHistoryItem(
     title: String,
     url: String,
+    cursorX: Float = 0f,
+    cursorY: Float = 0f,
+    density: Float = 1f,
     onClick: () -> Unit,
     onDelete: () -> Unit
 ) {
@@ -1301,6 +1384,7 @@ fun BookmarkHistoryItem(
         shape = RoundedCornerShape(12.dp),
         modifier = Modifier
             .fillMaxWidth()
+            .cursorHoverEffect(cursorX, cursorY, density, RoundedCornerShape(12.dp))
             .border(
                 width = 1.dp,
                 color = if (isFocused) Color(0xFFFF9800) else Color.Transparent,
@@ -1350,6 +1434,9 @@ fun BookmarkHistoryItem(
 @Composable
 fun DownloadsMenu(
     downloads: List<DownloadItem>,
+    cursorX: Float = 0f,
+    cursorY: Float = 0f,
+    density: Float = 1f,
     onCancel: (Long) -> Unit,
     onOpen: (String) -> Unit
 ) {
@@ -1379,7 +1466,7 @@ fun DownloadsMenu(
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 items(downloads) { download ->
-                    DownloadCardItem(download, onCancel, onOpen)
+                    DownloadCardItem(download, cursorX, cursorY, density, onCancel, onOpen)
                 }
             }
         }
@@ -1389,6 +1476,9 @@ fun DownloadsMenu(
 @Composable
 fun DownloadCardItem(
     item: DownloadItem,
+    cursorX: Float = 0f,
+    cursorY: Float = 0f,
+    density: Float = 1f,
     onCancel: (Long) -> Unit,
     onOpen: (String) -> Unit
 ) {
@@ -1402,6 +1492,7 @@ fun DownloadCardItem(
         shape = RoundedCornerShape(12.dp),
         modifier = Modifier
             .fillMaxWidth()
+            .cursorHoverEffect(cursorX, cursorY, density, RoundedCornerShape(12.dp))
             .border(
                 width = 1.dp,
                 color = if (isFocused) Color(0xFFFF9800) else Color.Transparent,
@@ -1449,25 +1540,29 @@ fun DownloadCardItem(
                     )
                 }
                 Spacer(modifier = Modifier.height(6.dp))
-                Button(
-                    onClick = { onCancel(item.id) },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE53935)),
-                    shape = RoundedCornerShape(6.dp),
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                    modifier = Modifier.height(28.dp).align(Alignment.End)
-                ) {
-                    Text("Cancel", fontSize = 10.sp, color = Color.White)
+                Box(modifier = Modifier.align(Alignment.End).cursorHoverEffect(cursorX, cursorY, density, RoundedCornerShape(6.dp))) {
+                    Button(
+                        onClick = { onCancel(item.id) },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE53935)),
+                        shape = RoundedCornerShape(6.dp),
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                        modifier = Modifier.height(28.dp)
+                    ) {
+                        Text("Cancel", fontSize = 10.sp, color = Color.White)
+                    }
                 }
             } else if (item.status == "COMPLETED") {
                 Spacer(modifier = Modifier.height(6.dp))
-                Button(
-                    onClick = { onOpen(item.filePath) },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4CAF50)),
-                    shape = RoundedCornerShape(6.dp),
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                    modifier = Modifier.height(28.dp).align(Alignment.End)
-                ) {
-                    Text("Open", fontSize = 10.sp, color = Color.White)
+                Box(modifier = Modifier.align(Alignment.End).cursorHoverEffect(cursorX, cursorY, density, RoundedCornerShape(6.dp))) {
+                    Button(
+                        onClick = { onOpen(item.filePath) },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4CAF50)),
+                        shape = RoundedCornerShape(6.dp),
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                        modifier = Modifier.height(28.dp)
+                    ) {
+                        Text("Open", fontSize = 10.sp, color = Color.White)
+                    }
                 }
             }
         }
@@ -1480,6 +1575,9 @@ fun ExtensionsMenu(
     extensions: List<ExtensionScript>,
     currentUrl: String,
     installState: InstallState,
+    cursorX: Float = 0f,
+    cursorY: Float = 0f,
+    density: Float = 1f,
     onToggle: (ExtensionScript) -> Unit,
     onDelete: (ExtensionScript) -> Unit,
     onAddExtension: (String, String, String) -> Unit,
@@ -1749,7 +1847,7 @@ fun ExtensionsMenu(
                     }
                 } else {
                     items(extensions) { ext ->
-                        ExtensionCardItem(ext, onToggle, onDelete)
+                        ExtensionCardItem(ext, cursorX, cursorY, density, onToggle, onDelete)
                     }
                 }
             }
@@ -1760,6 +1858,9 @@ fun ExtensionsMenu(
 @Composable
 fun ExtensionCardItem(
     item: ExtensionScript,
+    cursorX: Float = 0f,
+    cursorY: Float = 0f,
+    density: Float = 1f,
     onToggle: (ExtensionScript) -> Unit,
     onDelete: (ExtensionScript) -> Unit
 ) {
@@ -1773,6 +1874,7 @@ fun ExtensionCardItem(
         shape = RoundedCornerShape(12.dp),
         modifier = Modifier
             .fillMaxWidth()
+            .cursorHoverEffect(cursorX, cursorY, density, RoundedCornerShape(12.dp))
             .border(
                 width = 1.dp,
                 color = if (isFocused) Color(0xFFFF9800) else Color.Transparent,
@@ -1821,16 +1923,18 @@ fun ExtensionCardItem(
 
             if (item.isUserAdded) {
                 Spacer(modifier = Modifier.height(6.dp))
-                IconButton(
-                    onClick = { onDelete(item) },
-                    modifier = Modifier.size(28.dp).align(Alignment.End)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Delete,
-                        contentDescription = "Uninstall",
-                        tint = Color.Gray,
-                        modifier = Modifier.size(16.dp)
-                    )
+                Box(modifier = Modifier.align(Alignment.End).cursorHoverEffect(cursorX, cursorY, density, CircleShape)) {
+                    IconButton(
+                        onClick = { onDelete(item) },
+                        modifier = Modifier.size(28.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Delete,
+                            contentDescription = "Uninstall",
+                            tint = Color.Gray,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
                 }
             }
         }
@@ -1843,6 +1947,9 @@ fun ChromeMenu(
     canGoForward: Boolean,
     isBookmarked: Boolean,
     isDesktopActive: Boolean,
+    cursorX: Float = 0f,
+    cursorY: Float = 0f,
+    density: Float = 1f,
     onForward: () -> Unit,
     onBookmarkToggle: () -> Unit,
     onDownloadTrigger: () -> Unit,
@@ -1875,78 +1982,95 @@ fun ChromeMenu(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(bottom = 12.dp)
-                .background(Color(0xFF28282B), RoundedCornerShape(8.dp))
+                .background(
+                    Brush.horizontalGradient(
+                        colors = listOf(Color(0xFF2E2E33), Color(0xFF232326))
+                    ),
+                    RoundedCornerShape(12.dp)
+                )
+                .border(0.5.dp, Color(0xFF424248), RoundedCornerShape(12.dp))
                 .padding(6.dp),
             horizontalArrangement = Arrangement.SpaceAround,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            IconButton(onClick = onForward, enabled = canGoForward) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                    contentDescription = "Go Forward",
-                    tint = if (canGoForward) Color.White else Color.Gray
-                )
+            Box(modifier = Modifier.padding(2.dp).cursorHoverEffect(cursorX, cursorY, density, CircleShape)) {
+                IconButton(onClick = onForward, enabled = canGoForward) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                        contentDescription = "Go Forward",
+                        tint = if (canGoForward) Color.White else Color.Gray
+                    )
+                }
             }
-            IconButton(onClick = onBookmarkToggle) {
-                Icon(
-                    imageVector = Icons.Default.Star,
-                    contentDescription = "Bookmark Page",
-                    tint = if (isBookmarked) Color(0xFFFFD54F) else Color.White
-                )
+            Box(modifier = Modifier.padding(2.dp).cursorHoverEffect(cursorX, cursorY, density, CircleShape)) {
+                IconButton(onClick = onBookmarkToggle) {
+                    Icon(
+                        imageVector = Icons.Default.Star,
+                        contentDescription = "Bookmark Page",
+                        tint = if (isBookmarked) Color(0xFFFFD54F) else Color.White
+                    )
+                }
             }
-            IconButton(onClick = onDownloadTrigger) {
-                Icon(
-                    imageVector = Icons.Default.FileDownload,
-                    contentDescription = "Download Link",
-                    tint = Color.White
-                )
+            Box(modifier = Modifier.padding(2.dp).cursorHoverEffect(cursorX, cursorY, density, CircleShape)) {
+                IconButton(onClick = onDownloadTrigger) {
+                    Icon(
+                        imageVector = Icons.Default.FileDownload,
+                        contentDescription = "Download Link",
+                        tint = Color.White
+                    )
+                }
             }
-            IconButton(onClick = { /* Display secure protocol badge info */ }) {
-                Icon(
-                    imageVector = Icons.Default.Info,
-                    contentDescription = "Page Info",
-                    tint = Color.White
-                )
+            Box(modifier = Modifier.padding(2.dp).cursorHoverEffect(cursorX, cursorY, density, CircleShape)) {
+                IconButton(onClick = { /* Display secure protocol badge info */ }) {
+                    Icon(
+                        imageVector = Icons.Default.Info,
+                        contentDescription = "Page Info",
+                        tint = Color.White
+                    )
+                }
             }
-            IconButton(onClick = onRefresh) {
-                Icon(
-                    imageVector = Icons.Default.Refresh,
-                    contentDescription = "Reload Page",
-                    tint = Color.White
-                )
+            Box(modifier = Modifier.padding(2.dp).cursorHoverEffect(cursorX, cursorY, density, CircleShape)) {
+                IconButton(onClick = onRefresh) {
+                    Icon(
+                        imageVector = Icons.Default.Refresh,
+                        contentDescription = "Reload Page",
+                        tint = Color.White
+                    )
+                }
             }
         }
 
         HorizontalDivider(color = Color(0xFF323236), thickness = 1.dp, modifier = Modifier.padding(bottom = 12.dp))
 
         // Actions List
-        ChromeMenuItem(icon = Icons.Default.AddBox, label = "New tab", onClick = onNewTab)
-        ChromeMenuItem(icon = Icons.Default.VisibilityOff, label = "New Incognito tab", labelColor = Color(0xFFFFB74D), onClick = onNewIncognitoTab)
-        ChromeMenuItem(icon = Icons.Default.DynamicFeed, label = "Add tab to new group", onClick = onAddTabGroup)
+        ChromeMenuItem(icon = Icons.Default.AddBox, label = "New tab", cursorX = cursorX, cursorY = cursorY, density = density, onClick = onNewTab)
+        ChromeMenuItem(icon = Icons.Default.VisibilityOff, label = "New Incognito tab", labelColor = Color(0xFFFFB74D), cursorX = cursorX, cursorY = cursorY, density = density, onClick = onNewIncognitoTab)
+        ChromeMenuItem(icon = Icons.Default.DynamicFeed, label = "Add tab to new group", cursorX = cursorX, cursorY = cursorY, density = density, onClick = onAddTabGroup)
         
         HorizontalDivider(color = Color(0xFF2C2C2F), thickness = 1.dp, modifier = Modifier.padding(vertical = 4.dp))
         
-        ChromeMenuItem(icon = Icons.Default.History, label = "History", onClick = onHistory)
-        ChromeMenuItem(icon = Icons.Default.DeleteForever, label = "Clear browsing data", onClick = onDeleteData)
-        ChromeMenuItem(icon = Icons.Default.Download, label = "Downloads", onClick = onDownloads)
-        ChromeMenuItem(icon = Icons.Default.Bookmarks, label = "Bookmarks", onClick = onBookmarks)
-        ChromeMenuItem(icon = Icons.Default.Restore, label = "Recent tabs", onClick = onRecentTabs)
+        ChromeMenuItem(icon = Icons.Default.History, label = "History", cursorX = cursorX, cursorY = cursorY, density = density, onClick = onHistory)
+        ChromeMenuItem(icon = Icons.Default.DeleteForever, label = "Clear browsing data", cursorX = cursorX, cursorY = cursorY, density = density, onClick = onDeleteData)
+        ChromeMenuItem(icon = Icons.Default.Download, label = "Downloads", cursorX = cursorX, cursorY = cursorY, density = density, onClick = onDownloads)
+        ChromeMenuItem(icon = Icons.Default.Bookmarks, label = "Bookmarks", cursorX = cursorX, cursorY = cursorY, density = density, onClick = onBookmarks)
+        ChromeMenuItem(icon = Icons.Default.Restore, label = "Recent tabs", cursorX = cursorX, cursorY = cursorY, density = density, onClick = onRecentTabs)
 
         HorizontalDivider(color = Color(0xFF2C2C2F), thickness = 1.dp, modifier = Modifier.padding(vertical = 4.dp))
 
-        ChromeMenuItem(icon = Icons.Default.Share, label = "Share...", onClick = onShare)
-        ChromeMenuItem(icon = Icons.Default.FindInPage, label = "Find in page", onClick = onFindInPage)
-        ChromeMenuItem(icon = Icons.Default.Translate, label = "Translate...", onClick = onTranslate)
-        ChromeMenuItem(icon = Icons.Default.MenuBook, label = "Show Reading mode", onClick = onReadingMode)
-        ChromeMenuItem(icon = Icons.Default.AddToHomeScreen, label = "Add to Home screen", onClick = onAddToHome)
+        ChromeMenuItem(icon = Icons.Default.Share, label = "Share...", cursorX = cursorX, cursorY = cursorY, density = density, onClick = onShare)
+        ChromeMenuItem(icon = Icons.Default.FindInPage, label = "Find in page", cursorX = cursorX, cursorY = cursorY, density = density, onClick = onFindInPage)
+        ChromeMenuItem(icon = Icons.Default.Translate, label = "Translate...", cursorX = cursorX, cursorY = cursorY, density = density, onClick = onTranslate)
+        ChromeMenuItem(icon = Icons.Default.MenuBook, label = "Show Reading mode", cursorX = cursorX, cursorY = cursorY, density = density, onClick = onReadingMode)
+        ChromeMenuItem(icon = Icons.Default.AddToHomeScreen, label = "Add to Home screen", cursorX = cursorX, cursorY = cursorY, density = density, onClick = onAddToHome)
         
         // Desktop version toggle with checkbox
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .cursorHoverEffect(cursorX, cursorY, density, RoundedCornerShape(8.dp))
                 .clip(RoundedCornerShape(8.dp))
                 .clickable { onDesktopToggle() }
-                .padding(vertical = 12.dp, horizontal = 8.dp),
+                .padding(vertical = 10.dp, horizontal = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
@@ -1978,8 +2102,8 @@ fun ChromeMenu(
 
         HorizontalDivider(color = Color(0xFF2C2C2F), thickness = 1.dp, modifier = Modifier.padding(vertical = 4.dp))
 
-        ChromeMenuItem(icon = Icons.Default.Settings, label = "Settings", onClick = onSettings)
-        ChromeMenuItem(icon = Icons.Default.Help, label = "Help & feedback", onClick = onHelpFeedback)
+        ChromeMenuItem(icon = Icons.Default.Settings, label = "Settings", cursorX = cursorX, cursorY = cursorY, density = density, onClick = onSettings)
+        ChromeMenuItem(icon = Icons.Default.Help, label = "Help & feedback", cursorX = cursorX, cursorY = cursorY, density = density, onClick = onHelpFeedback)
     }
 }
 
@@ -1988,14 +2112,18 @@ fun ChromeMenuItem(
     icon: ImageVector,
     label: String,
     labelColor: Color = Color.White,
+    cursorX: Float = 0f,
+    cursorY: Float = 0f,
+    density: Float = 1f,
     onClick: () -> Unit
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .cursorHoverEffect(cursorX, cursorY, density, RoundedCornerShape(8.dp))
             .clip(RoundedCornerShape(8.dp))
             .clickable { onClick() }
-            .padding(vertical = 12.dp, horizontal = 8.dp),
+            .padding(vertical = 10.dp, horizontal = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(16.dp)
     ) {
@@ -2019,6 +2147,9 @@ fun SettingsPanel(
     currentEngine: String,
     currentZoom: Int,
     adBlockActive: Boolean,
+    cursorX: Float = 0f,
+    cursorY: Float = 0f,
+    density: Float = 1f,
     onEngineSelect: (String) -> Unit,
     onZoomSelect: (Int) -> Unit,
     onAdBlockToggle: () -> Unit,
@@ -2030,12 +2161,14 @@ fun SettingsPanel(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            IconButton(onClick = onBackToMenu) {
-                Icon(
-                    imageVector = Icons.Default.ArrowBack,
-                    contentDescription = "Back to menu",
-                    tint = Color.White
-                )
+            Box(modifier = Modifier.cursorHoverEffect(cursorX, cursorY, density, CircleShape)) {
+                IconButton(onClick = onBackToMenu) {
+                    Icon(
+                        imageVector = Icons.Default.ArrowBack,
+                        contentDescription = "Back to menu",
+                        tint = Color.White
+                    )
+                }
             }
             Text(
                 text = "Settings",
@@ -2072,8 +2205,10 @@ fun SettingsPanel(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .cursorHoverEffect(cursorX, cursorY, density, RoundedCornerShape(8.dp))
+                                .clip(RoundedCornerShape(8.dp))
                                 .clickable { onEngineSelect(url) }
-                                .padding(vertical = 10.dp, horizontal = 4.dp),
+                                .padding(vertical = 10.dp, horizontal = 8.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
@@ -2103,8 +2238,10 @@ fun SettingsPanel(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .cursorHoverEffect(cursorX, cursorY, density, RoundedCornerShape(8.dp))
+                                .clip(RoundedCornerShape(8.dp))
                                 .clickable { onZoomSelect(zoom) }
-                                .padding(vertical = 10.dp, horizontal = 4.dp),
+                                .padding(vertical = 10.dp, horizontal = 8.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
@@ -2125,8 +2262,10 @@ fun SettingsPanel(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .cursorHoverEffect(cursorX, cursorY, density, RoundedCornerShape(8.dp))
+                        .clip(RoundedCornerShape(8.dp))
                         .clickable { onAdBlockToggle() }
-                        .padding(vertical = 12.dp, horizontal = 4.dp),
+                        .padding(vertical = 12.dp, horizontal = 8.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -2148,6 +2287,9 @@ fun SettingsPanel(
 @Composable
 fun RecentTabsPanel(
     closedTabs: List<Pair<String, String>>,
+    cursorX: Float = 0f,
+    cursorY: Float = 0f,
+    density: Float = 1f,
     onTabClick: (String) -> Unit,
     onBackToMenu: () -> Unit
 ) {
@@ -2157,12 +2299,14 @@ fun RecentTabsPanel(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            IconButton(onClick = onBackToMenu) {
-                Icon(
-                    imageVector = Icons.Default.ArrowBack,
-                    contentDescription = "Back to menu",
-                    tint = Color.White
-                )
+            Box(modifier = Modifier.cursorHoverEffect(cursorX, cursorY, density, CircleShape)) {
+                IconButton(onClick = onBackToMenu) {
+                    Icon(
+                        imageVector = Icons.Default.ArrowBack,
+                        contentDescription = "Back to menu",
+                        tint = Color.White
+                    )
+                }
             }
             Text(
                 text = "Recently closed",
@@ -2192,8 +2336,10 @@ fun RecentTabsPanel(
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .cursorHoverEffect(cursorX, cursorY, density, RoundedCornerShape(8.dp))
+                            .clip(RoundedCornerShape(8.dp))
                             .clickable { onTabClick(url) }
-                            .padding(8.dp)
+                            .padding(10.dp)
                     ) {
                         Text(text = title, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                         Text(text = url, color = Color.Gray, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -2206,6 +2352,9 @@ fun RecentTabsPanel(
 
 @Composable
 fun HelpFeedbackPanel(
+    cursorX: Float = 0f,
+    cursorY: Float = 0f,
+    density: Float = 1f,
     onBackToMenu: () -> Unit
 ) {
     Column(
@@ -2218,12 +2367,14 @@ fun HelpFeedbackPanel(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            IconButton(onClick = onBackToMenu) {
-                Icon(
-                    imageVector = Icons.Default.ArrowBack,
-                    contentDescription = "Back to menu",
-                    tint = Color.White
-                )
+            Box(modifier = Modifier.cursorHoverEffect(cursorX, cursorY, density, CircleShape)) {
+                IconButton(onClick = onBackToMenu) {
+                    Icon(
+                        imageVector = Icons.Default.ArrowBack,
+                        contentDescription = "Back to menu",
+                        tint = Color.White
+                    )
+                }
             }
             Text(
                 text = "Help & feedback",
@@ -2249,7 +2400,12 @@ fun HelpFeedbackPanel(
         )
 
         faqs.forEach { (q, a) ->
-            Column(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .cursorHoverEffect(cursorX, cursorY, density, RoundedCornerShape(8.dp))
+                    .padding(8.dp)
+            ) {
                 Text(text = "Q: $q", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(text = "A: $a", color = Color.LightGray, fontSize = 13.sp)
@@ -2266,4 +2422,56 @@ fun HelpFeedbackPanel(
             modifier = Modifier.fillMaxWidth()
         )
     }
+}
+
+@Composable
+fun Modifier.cursorHoverEffect(
+    cursorX: Float,
+    cursorY: Float,
+    density: Float,
+    shape: Shape = RoundedCornerShape(8.dp)
+): Modifier {
+    var isHovered by remember { mutableStateOf(false) }
+    return this
+        .onGloballyPositioned { coords ->
+            if (coords.isAttached) {
+                val position = coords.positionInRoot()
+                val size = coords.size
+                val cx = cursorX * density
+                val cy = cursorY * density
+                val hover = cx >= position.x && cx <= (position.x + size.width) &&
+                            cy >= position.y && cy <= (position.y + size.height)
+                if (hover != isHovered) {
+                    isHovered = hover
+                }
+            }
+        }
+        .drawBehind {
+            if (isHovered) {
+                val bgBrush = Brush.linearGradient(
+                    colors = listOf(Color(0x35FF9800), Color(0x22CE93D8))
+                )
+                val radius = if (shape == CircleShape) {
+                    size.minDimension / 2f
+                } else {
+                    10.dp.toPx()
+                }
+                
+                // Draw background
+                drawRoundRect(
+                    brush = bgBrush,
+                    cornerRadius = CornerRadius(radius, radius)
+                )
+                
+                // Draw border
+                val borderBrush = Brush.linearGradient(
+                    colors = listOf(Color(0xFFFF9800), Color(0xFFCE93D8))
+                )
+                drawRoundRect(
+                    brush = borderBrush,
+                    cornerRadius = CornerRadius(radius, radius),
+                    style = Stroke(width = 1.5.dp.toPx())
+                )
+            }
+        }
 }
