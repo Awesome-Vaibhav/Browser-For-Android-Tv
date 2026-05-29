@@ -1,6 +1,6 @@
 {
   "name": "TV Browser",
-  "description": "A lightweight, fully featured web browser for Android TV with inbuilt virtual mouse cursor controlled by TV remote, Chrome/Firefox-compatible extension script support, bookmarks, history, voice search, and ad blocker.",
+  "description": "A lightweight, fully featured web browser for Android TV with inbuilt virtual mouse cursor controlled by TV remote, dedicated Firefox AMO and custom (.xpi) script extensions, bookmarks, history, voice search, and ad blocker.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

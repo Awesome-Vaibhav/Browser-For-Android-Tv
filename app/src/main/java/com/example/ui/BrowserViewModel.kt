@@ -355,53 +355,6 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         _installExtensionState.value = InstallState.Idle
     }
 
-    // Detect if current page is Chrome Web Store detail page
-    fun isChromeExtensionUrl(url: String): Boolean {
-        return url.contains("chromewebstore.google.com/detail/") || url.contains("chrome.google.com/webstore/detail/")
-    }
-
-    // Extract Chrome Extension ID from current URL
-    fun extractChromeExtensionId(url: String): String? {
-        val segments = url.split("/")
-        for (segment in segments) {
-            val trimmed = segment.substringBefore("?").substringBefore("#").trim()
-            if (trimmed.length == 32 && trimmed.all { it.isLowerCase() }) {
-                return trimmed
-            }
-        }
-        return null
-    }
-
-    // Install Chrome Extension directly from Web Store by ID
-    fun installChromeExtensionById(id: String) {
-        if (id.length != 32 || !id.all { it.isLowerCase() }) {
-            _installExtensionState.value = InstallState.Error("Invalid Chrome Extension ID. Must be 32 lowercase letters.")
-            return
-        }
-
-        viewModelScope.launch(Dispatchers.IO) {
-            try {
-                _installExtensionState.value = InstallState.Installing("Fetching extension package from Chrome Web Store...")
-                val client = OkHttpClient()
-                // Fetch direct .crx file link
-                val downloadUrl = "https://clients2.google.com/service/update2/crx?response=redirect&prodversion=114.0.0.0&acceptformat=crx2,crx3&x=id%3D${id}%26uc"
-                val request = Request.Builder()
-                    .url(downloadUrl)
-                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-                    .build()
-
-                val response = client.newCall(request).execute()
-                if (!response.isSuccessful) throw Exception("Could not pull CRX archive. Server status: ${response.code}")
-
-                val body = response.body ?: throw Exception("Null contents received from Chrome servers.")
-                installExtensionFromArchive(body.byteStream(), "Chrome Extension ($id)")
-            } catch (e: Exception) {
-                Log.e("TVBrowserExtensionStore", "Chrome download failed", e)
-                _installExtensionState.value = InstallState.Error("Google store connection failed: ${e.localizedMessage}")
-            }
-        }
-    }
-
     // Install direct Firefox AMO / online package link (.xpi, .crx, .zip)
     fun installExtensionFromUrl(url: String) {
         viewModelScope.launch(Dispatchers.IO) {

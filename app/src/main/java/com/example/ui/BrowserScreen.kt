@@ -42,6 +42,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -597,7 +598,8 @@ fun NavigationBarRow(
                 icon = Icons.AutoMirrored.Filled.ArrowBack,
                 contentDescription = "Go Back",
                 enabled = canGoBack,
-                onClick = onBack
+                onClick = onBack,
+                cursorEnabled = cursorEnabled
             )
 
             // Forward button
@@ -605,7 +607,8 @@ fun NavigationBarRow(
                 icon = Icons.AutoMirrored.Filled.ArrowForward,
                 contentDescription = "Go Forward",
                 enabled = canGoForward,
-                onClick = onForward
+                onClick = onForward,
+                cursorEnabled = cursorEnabled
             )
 
             // Reload / Stop loading button
@@ -613,7 +616,8 @@ fun NavigationBarRow(
                 icon = if (isLoading) Icons.Default.Close else Icons.Default.Refresh,
                 contentDescription = "Reload",
                 enabled = true,
-                onClick = onReload
+                onClick = onReload,
+                cursorEnabled = cursorEnabled
             )
 
             // Dynamic Search Address Bar Textfield
@@ -653,13 +657,18 @@ fun NavigationBarRow(
                         keyboardActions = KeyboardActions(
                             onSearch = { onSearchTriggered() }
                         ),
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier
+                            .weight(1f)
+                            .focusProperties { canFocus = !cursorEnabled }
                     )
 
                     // Voice assistant search navigator
                     IconButton(
                         onClick = onVoiceTrigger,
-                        modifier = Modifier.size(36.dp).background(Color(0xFF3E3E44), CircleShape)
+                        modifier = Modifier
+                            .size(36.dp)
+                            .background(Color(0xFF3E3E44), CircleShape)
+                            .focusProperties { canFocus = !cursorEnabled }
                     ) {
                         Icon(
                             imageVector = Icons.Default.Mic,
@@ -677,7 +686,8 @@ fun NavigationBarRow(
                 contentDescription = "Bookmark present url",
                 enabled = true,
                 onClick = onBookmarkToggle,
-                tint = if (isBookmarked) Color(0xFFFFC107) else Color.DarkGray
+                tint = if (isBookmarked) Color(0xFFFFC107) else Color.DarkGray,
+                cursorEnabled = cursorEnabled
             )
 
             // Virtual mouse cursor toggle controller
@@ -687,7 +697,8 @@ fun NavigationBarRow(
                 enabled = true,
                 onClick = onCursorModeToggled,
                 activeHighlight = cursorEnabled,
-                tint = if (cursorEnabled) Color(0xFFFF5722) else Color.DarkGray
+                tint = if (cursorEnabled) Color(0xFFFF5722) else Color.DarkGray,
+                cursorEnabled = cursorEnabled
             )
 
             // Ad blocker toggler
@@ -697,7 +708,8 @@ fun NavigationBarRow(
                 enabled = true,
                 onClick = onAdBlockToggle,
                 activeHighlight = adBlockActive,
-                tint = if (adBlockActive) Color(0xFF00E676) else Color.DarkGray
+                tint = if (adBlockActive) Color(0xFF00E676) else Color.DarkGray,
+                cursorEnabled = cursorEnabled
             )
 
             // Bookmarks Menu trigger
@@ -705,7 +717,8 @@ fun NavigationBarRow(
                 icon = Icons.Default.Bookmarks,
                 contentDescription = "Open Bookmarks drawer",
                 enabled = true,
-                onClick = { onMenuSelect(BrowserViewModel.MenuType.BOOKMARKS) }
+                onClick = { onMenuSelect(BrowserViewModel.MenuType.BOOKMARKS) },
+                cursorEnabled = cursorEnabled
             )
 
             // History menu trigger
@@ -713,7 +726,8 @@ fun NavigationBarRow(
                 icon = Icons.Default.History,
                 contentDescription = "Open History drawer",
                 enabled = true,
-                onClick = { onMenuSelect(BrowserViewModel.MenuType.HISTORY) }
+                onClick = { onMenuSelect(BrowserViewModel.MenuType.HISTORY) },
+                cursorEnabled = cursorEnabled
             )
 
             // Extensions Settings list trigger
@@ -721,7 +735,8 @@ fun NavigationBarRow(
                 icon = Icons.Default.Extension,
                 contentDescription = "Extension Manager Settings",
                 enabled = true,
-                onClick = { onMenuSelect(BrowserViewModel.MenuType.EXTENSIONS) }
+                onClick = { onMenuSelect(BrowserViewModel.MenuType.EXTENSIONS) },
+                cursorEnabled = cursorEnabled
             )
 
             // Downloads trigger
@@ -729,7 +744,8 @@ fun NavigationBarRow(
                 icon = Icons.Default.Download,
                 contentDescription = "Downloads list Panel",
                 enabled = true,
-                onClick = { onMenuSelect(BrowserViewModel.MenuType.DOWNLOADS) }
+                onClick = { onMenuSelect(BrowserViewModel.MenuType.DOWNLOADS) },
+                cursorEnabled = cursorEnabled
             )
         }
     }
@@ -743,7 +759,8 @@ fun NavigationIconButton(
     enabled: Boolean,
     onClick: () -> Unit,
     activeHighlight: Boolean = false,
-    tint: Color = Color.White
+    tint: Color = Color.White,
+    cursorEnabled: Boolean = false
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
@@ -761,6 +778,7 @@ fun NavigationIconButton(
         modifier = Modifier
             .size(44.dp)
             .clip(CircleShape)
+            .focusProperties { canFocus = !cursorEnabled }
             .background(
                 if (isFocused) Color(0xFF3D3D44) 
                 else if (activeHighlight) tint.copy(alpha = 0.12f)
