@@ -14,6 +14,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -36,6 +37,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.shadow
@@ -301,8 +303,14 @@ fun BrowserScreen(
 
                             // Setup Custom Download listener
                             setDownloadListener { url, userAgent, contentDisposition, mimetype, _ ->
-                                viewModel.startFileDownload(url, userAgent, contentDisposition, mimetype)
-                                viewModel.toggleMenu(BrowserViewModel.MenuType.DOWNLOADS)
+                                if (url.contains(".crx") || url.contains(".xpi") || mimetype == "application/x-xpinstall" || mimetype == "application/x-chrome-extension") {
+                                    // Direct extension install from store Web pages
+                                    viewModel.installExtensionFromUrl(url)
+                                    viewModel.toggleMenu(BrowserViewModel.MenuType.EXTENSIONS)
+                                } else {
+                                    viewModel.startFileDownload(url, userAgent, contentDisposition, mimetype)
+                                    viewModel.toggleMenu(BrowserViewModel.MenuType.DOWNLOADS)
+                                }
                             }
 
                             // Block Ads via shouldInterceptRequest in WebViewClient
@@ -488,11 +496,20 @@ fun BrowserScreen(
                         )
                         BrowserViewModel.MenuType.EXTENSIONS -> ExtensionsMenu(
                             extensions = extensions,
+                            currentUrl = currentUrl,
+                            installState = viewModel.installExtensionState.collectAsStateWithLifecycle().value,
                             onToggle = { viewModel.toggleExtension(it) },
                             onDelete = { viewModel.deleteExtension(it) },
                             onAddExtension = { name, desc, code ->
                                 viewModel.addCustomExtension(name, desc, code)
-                            }
+                            },
+                            onLoadUrl = { url ->
+                                viewModel.loadUrl(url)
+                                viewModel.toggleMenu(null)
+                            },
+                            onInstallChromeById = { id -> viewModel.installChromeExtensionById(id) },
+                            onInstallFromUrl = { url -> viewModel.installExtensionFromUrl(url) },
+                            viewModel = viewModel
                         )
                         else -> {}
                     }
@@ -1022,22 +1039,31 @@ fun DownloadCardItem(
     }
 }
 
-// Extensions settings menu
+// Extensions settings menu with direct Chrome & Firefox web store installer integrations
 @Composable
 fun ExtensionsMenu(
     extensions: List<ExtensionScript>,
+    currentUrl: String,
+    installState: InstallState,
     onToggle: (ExtensionScript) -> Unit,
     onDelete: (ExtensionScript) -> Unit,
-    onAddExtension: (String, String, String) -> Unit
+    onAddExtension: (String, String, String) -> Unit,
+    onLoadUrl: (String) -> Unit,
+    onInstallChromeById: (String) -> Unit,
+    onInstallFromUrl: (String) -> Unit,
+    viewModel: BrowserViewModel
 ) {
     var showAddPane by remember { mutableStateOf(false) }
     var extName by remember { mutableStateOf("") }
     var extDesc by remember { mutableStateOf("") }
     var extCode by remember { mutableStateOf("") }
 
+    var pasteChromeId by remember { mutableStateOf("") }
+    var pastePackageUrl by remember { mutableStateOf("") }
+
     Column(modifier = Modifier.fillMaxSize()) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+            modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -1056,7 +1082,74 @@ fun ExtensionsMenu(
                 contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                 shape = RoundedCornerShape(8.dp)
             ) {
-                Text(if (showAddPane) "View Active" else "+ Custom Script", fontSize = 11.sp, color = Color.White)
+                Text(if (showAddPane) "View List" else "+ Custom Script", fontSize = 11.sp, color = Color.White)
+            }
+        }
+
+        // Live Installation Status Alerts
+        if (installState !is InstallState.Idle) {
+            Card(
+                colors = CardDefaults.cardColors(
+                    containerColor = when (installState) {
+                        is InstallState.Installing -> Color(0xFF1E3A8A)
+                        is InstallState.Success -> Color(0xFF064E3B)
+                        is InstallState.Error -> Color(0xFF7F1D1D)
+                        else -> Color.Transparent
+                    }
+                ),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth().padding(bottom = 14.dp)
+            ) {
+                Column(modifier = Modifier.fillMaxWidth().padding(12.dp)) {
+                    Text(
+                        text = when (installState) {
+                            is InstallState.Installing -> "INSTALLING EXTENSION"
+                            is InstallState.Success -> "INSTALL SUCCESSFUL"
+                            is InstallState.Error -> "INSTALLATION ERROR"
+                            else -> ""
+                        },
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = when (installState) {
+                            is InstallState.Installing -> Color(0xFF60A5FA)
+                            is InstallState.Success -> Color(0xFF34D399)
+                            is InstallState.Error -> Color(0xFFF87171)
+                            else -> Color.White
+                        }
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = when (installState) {
+                            is InstallState.Installing -> installState.message
+                            is InstallState.Success -> installState.message
+                            is InstallState.Error -> installState.message
+                            else -> ""
+                        },
+                        fontSize = 12.sp,
+                        color = Color.White,
+                        fontWeight = FontWeight.Medium
+                    )
+                    if (installState is InstallState.Installing) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        LinearProgressIndicator(
+                            modifier = Modifier.fillMaxWidth().height(4.dp).clip(CircleShape),
+                            color = Color(0xFFFF9800),
+                            trackColor = Color(0xFFA1A1AA).copy(alpha = 0.3f)
+                        )
+                    }
+                    if (installState !is InstallState.Installing) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Button(
+                            onClick = { viewModel.clearInstallState() },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color.White.copy(alpha = 0.2f)),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp),
+                            shape = RoundedCornerShape(6.dp),
+                            modifier = Modifier.height(26.dp).align(Alignment.End)
+                        ) {
+                            Text("Dismiss", color = Color.White, fontSize = 10.sp)
+                        }
+                    }
+                }
             }
         }
 
@@ -1112,22 +1205,227 @@ fun ExtensionsMenu(
                 }
             }
         } else {
-            if (extensions.isEmpty()) {
-                Box(
-                    modifier = Modifier.weight(1f).fillMaxWidth(),
-                    contentAlignment = Alignment.Center
-                ) {
+            LazyColumn(
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                // Feature 1: Dynamic Smart Button if user is on Chrome Web Store Page
+                if (viewModel.isChromeExtensionUrl(currentUrl)) {
+                    val extId = viewModel.extractChromeExtensionId(currentUrl)
+                    if (extId != null) {
+                        item {
+                            Card(
+                                colors = CardDefaults.cardColors(containerColor = Color(0xFFFF9800).copy(alpha = 0.2f)),
+                                border = BorderStroke(1.dp, Color(0xFFFF9800)),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Column(
+                                    modifier = Modifier.fillMaxWidth().padding(12.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally
+                                ) {
+                                    Text(
+                                        text = "⚡ Chrome Extension Detected!",
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFFFF9800)
+                                    )
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = "Build compatible scripts directly from manifest content scripts.",
+                                        fontSize = 11.sp,
+                                        color = Color.LightGray,
+                                        textAlign = TextAlign.Center
+                                    )
+                                    Spacer(modifier = Modifier.height(10.dp))
+                                    Button(
+                                        onClick = { onInstallChromeById(extId) },
+                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF9800)),
+                                        shape = RoundedCornerShape(8.dp),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Text("Install Directly Now", color = Color.White, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Feature 2: Directory Portals for Web Stores
+                item {
                     Text(
-                        text = "No extension scripts pre-loaded",
-                        color = Color.Gray,
-                        fontSize = 14.sp
+                        text = "EXPLORE EXTENSIONS WEBSITES",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.Gray
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        // Chrome Store Directory Button
+                        Card(
+                            onClick = { onLoadUrl("https://chromewebstore.google.com") },
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFF232529)),
+                            modifier = Modifier.weight(1f).height(62.dp),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Icon(Icons.Default.Language, "CWS", tint = Color(0xFFFF9800), modifier = Modifier.size(16.dp))
+                                    Text("Chrome Store", fontSize = 12.sp, color = Color.White, fontWeight = FontWeight.Medium)
+                                }
+                            }
+                        }
+
+                        // Firefox Store Directory Button
+                        Card(
+                            onClick = { onLoadUrl("https://addons.mozilla.org/en-US/firefox/") },
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFF232529)),
+                            modifier = Modifier.weight(1f).height(62.dp),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Icon(Icons.Default.Language, "AMO", tint = Color(0xFFFF5722), modifier = Modifier.size(16.dp))
+                                    Text("Firefox Add-ons", fontSize = 12.sp, color = Color.White, fontWeight = FontWeight.Medium)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Feature 3: Quick Direct Store Installers (Manual Copy/Paste)
+                item {
+                    Text(
+                        text = "PASTE LINK & INSTALL DIRECTLY",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.Gray
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    
+                    // Chrome 32-letter ID installer
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color(0xFF232529))
+                            .padding(10.dp)
+                    ) {
+                        Text("Install Chrome Extension by ID:", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            BasicTextField(
+                                value = pasteChromeId,
+                                onValueChange = { pasteChromeId = it },
+                                textStyle = TextStyle(color = Color.White, fontSize = 12.sp),
+                                cursorBrush = SolidColor(Color(0xFFFF9800)),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .background(Color(0xFF141518), RoundedCornerShape(4.dp))
+                                    .padding(8.dp)
+                            )
+                            Button(
+                                onClick = {
+                                    val trimmed = pasteChromeId.trim()
+                                    if (trimmed.length == 32) {
+                                        onInstallChromeById(trimmed)
+                                        pasteChromeId = ""
+                                    }
+                                },
+                                enabled = pasteChromeId.trim().length == 32,
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF9800)),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                                shape = RoundedCornerShape(6.dp),
+                                modifier = Modifier.height(34.dp)
+                            ) {
+                                Text("Install", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    // Firefox AMO / External CRX Link installer
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color(0xFF232529))
+                            .padding(10.dp)
+                    ) {
+                        Text("Install Firefox (.xpi) or direct package link:", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            BasicTextField(
+                                value = pastePackageUrl,
+                                onValueChange = { pastePackageUrl = it },
+                                textStyle = TextStyle(color = Color.White, fontSize = 12.sp),
+                                cursorBrush = SolidColor(Color(0xFFFF9800)),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .background(Color(0xFF141518), RoundedCornerShape(4.dp))
+                                    .padding(8.dp)
+                            )
+                            Button(
+                                onClick = {
+                                    val trimmedUrl = pastePackageUrl.trim()
+                                    if (trimmedUrl.isNotEmpty()) {
+                                        onInstallFromUrl(trimmedUrl)
+                                        pastePackageUrl = ""
+                                    }
+                                },
+                                enabled = pastePackageUrl.trim().isNotEmpty(),
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF5722)),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                                shape = RoundedCornerShape(6.dp),
+                                modifier = Modifier.height(34.dp)
+                            ) {
+                                Text("Load", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                }
+
+                // Feature 4: Loaded Extensions List
+                item {
+                    Text(
+                        text = "INSTALLED EXTENSIONS",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.Gray
                     )
                 }
-            } else {
-                LazyColumn(
-                    modifier = Modifier.weight(1f).fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
+
+                if (extensions.isEmpty()) {
+                    item {
+                        Box(
+                            modifier = Modifier.fillMaxWidth().height(80.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "No direct web store extensions currently loaded",
+                                color = Color.DarkGray,
+                                fontSize = 13.sp,
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                    }
+                } else {
                     items(extensions) { ext ->
                         ExtensionCardItem(ext, onToggle, onDelete)
                     }

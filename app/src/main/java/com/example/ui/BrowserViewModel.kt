@@ -22,10 +22,21 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import org.json.JSONObject
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.io.InputStream
 import java.net.URL
+import java.util.zip.ZipInputStream
+
+sealed class InstallState {
+    object Idle : InstallState()
+    data class Installing(val message: String) : InstallState()
+    data class Success(val message: String) : InstallState()
+    data class Error(val message: String) : InstallState()
+}
 
 class BrowserViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -333,6 +344,253 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch(Dispatchers.IO) {
             activeDownloadJobs[id]?.cancel()
             repository.removeDownload(id)
+        }
+    }
+
+    // Dynamic direct extension store installation engine (Chrome Web Store & Firefox AMO)
+    private val _installExtensionState = MutableStateFlow<InstallState>(InstallState.Idle)
+    val installExtensionState: StateFlow<InstallState> = _installExtensionState.asStateFlow()
+
+    fun clearInstallState() {
+        _installExtensionState.value = InstallState.Idle
+    }
+
+    // Detect if current page is Chrome Web Store detail page
+    fun isChromeExtensionUrl(url: String): Boolean {
+        return url.contains("chromewebstore.google.com/detail/") || url.contains("chrome.google.com/webstore/detail/")
+    }
+
+    // Extract Chrome Extension ID from current URL
+    fun extractChromeExtensionId(url: String): String? {
+        val segments = url.split("/")
+        for (segment in segments) {
+            val trimmed = segment.substringBefore("?").substringBefore("#").trim()
+            if (trimmed.length == 32 && trimmed.all { it.isLowerCase() }) {
+                return trimmed
+            }
+        }
+        return null
+    }
+
+    // Install Chrome Extension directly from Web Store by ID
+    fun installChromeExtensionById(id: String) {
+        if (id.length != 32 || !id.all { it.isLowerCase() }) {
+            _installExtensionState.value = InstallState.Error("Invalid Chrome Extension ID. Must be 32 lowercase letters.")
+            return
+        }
+
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                _installExtensionState.value = InstallState.Installing("Fetching extension package from Chrome Web Store...")
+                val client = OkHttpClient()
+                // Fetch direct .crx file link
+                val downloadUrl = "https://clients2.google.com/service/update2/crx?response=redirect&prodversion=114.0.0.0&acceptformat=crx2,crx3&x=id%3D${id}%26uc"
+                val request = Request.Builder()
+                    .url(downloadUrl)
+                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+                    .build()
+
+                val response = client.newCall(request).execute()
+                if (!response.isSuccessful) throw Exception("Could not pull CRX archive. Server status: ${response.code}")
+
+                val body = response.body ?: throw Exception("Null contents received from Chrome servers.")
+                installExtensionFromArchive(body.byteStream(), "Chrome Extension ($id)")
+            } catch (e: Exception) {
+                Log.e("TVBrowserExtensionStore", "Chrome download failed", e)
+                _installExtensionState.value = InstallState.Error("Google store connection failed: ${e.localizedMessage}")
+            }
+        }
+    }
+
+    // Install direct Firefox AMO / online package link (.xpi, .crx, .zip)
+    fun installExtensionFromUrl(url: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                _installExtensionState.value = InstallState.Installing("Downloading Firefox/External extension package...")
+                val client = OkHttpClient()
+                val request = Request.Builder()
+                    .url(url)
+                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Gecko/20100101 Firefox/120.0")
+                    .build()
+
+                val response = client.newCall(request).execute()
+                if (!response.isSuccessful) throw Exception("Download failed with server status code: ${response.code}")
+
+                val body = response.body ?: throw Exception("Null contents received from Firefox servers.")
+                val filename = URLUtil.guessFileName(url, null, null)
+                val extName = filename.substringBeforeLast(".").ifEmpty { "Firefox Extension" }
+                installExtensionFromArchive(body.byteStream(), extName)
+            } catch (e: Exception) {
+                Log.e("TVBrowserExtensionStore", "Firefox download failed", e)
+                _installExtensionState.value = InstallState.Error("AMO store connection failed: ${e.localizedMessage}")
+            }
+        }
+    }
+
+    // Extract archive (.crx, .xpi, .zip), parse manifest.json, extract scripts and combine
+    fun installExtensionFromArchive(inputStream: InputStream, fallbackName: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                _installExtensionState.value = InstallState.Installing("Extracting & reading bundle...")
+                val bytes = inputStream.readBytes()
+
+                // Crucial step: find PK\u0003\u0004 header to strip Google's CRX format envelope
+                var zipOffset = -1
+                for (i in 0 until bytes.size - 3) {
+                    if (bytes[i] == 0x50.toByte() &&
+                        bytes[i+1] == 0x4B.toByte() &&
+                        bytes[i+2] == 0x03.toByte() &&
+                        bytes[i+3] == 0x04.toByte()) {
+                        zipOffset = i
+                        break
+                    }
+                }
+
+                val zipBytes = if (zipOffset != -1) {
+                    bytes.copyOfRange(zipOffset, bytes.size)
+                } else {
+                    bytes
+                }
+
+                val filesMap = mutableMapOf<String, String>()
+                val zipStream = ZipInputStream(ByteArrayInputStream(zipBytes))
+                var entry = zipStream.nextEntry
+                var manifestContent = ""
+
+                while (entry != null) {
+                    val name = entry.name.replace("\\", "/").trimStart('/')
+                    if (!entry.isDirectory) {
+                        val out = ByteArrayOutputStream()
+                        val buffer = ByteArray(2048)
+                        var len: Int
+                        while (zipStream.read(buffer).also { len = it } != -1) {
+                            out.write(buffer, 0, len)
+                        }
+                        val contentString = out.toString("UTF-8")
+
+                        if (name == "manifest.json") {
+                            manifestContent = contentString
+                        } else {
+                            filesMap[name] = contentString
+                        }
+                    }
+                    zipStream.closeEntry()
+                    entry = zipStream.nextEntry
+                }
+                zipStream.close()
+
+                if (manifestContent.isEmpty()) {
+                    _installExtensionState.value = InstallState.Error("No manifest.json found inside the extension package.")
+                    return@launch
+                }
+
+                val manifestJson = JSONObject(manifestContent)
+                val name = manifestJson.optString("name", fallbackName)
+                val description = manifestJson.optString("description", "Directly installed Store Extension script.")
+
+                val jsCodeBuilder = StringBuilder()
+                val cssCodeBuilder = StringBuilder()
+
+                val contentScriptsArray = manifestJson.optJSONArray("content_scripts")
+                if (contentScriptsArray != null && contentScriptsArray.length() > 0) {
+                    for (i in 0 until contentScriptsArray.length()) {
+                        val scriptObj = contentScriptsArray.getJSONObject(i)
+
+                        // Extracted JS Inject files
+                        val jsArray = scriptObj.optJSONArray("js")
+                        if (jsArray != null) {
+                            for (j in 0 until jsArray.length()) {
+                                val jsFile = jsArray.getString(j).replace("\\", "/").trimStart('/')
+                                val fileContent = filesMap[jsFile] ?: filesMap.entries.firstOrNull { it.key.endsWith(jsFile) }?.value
+                                if (fileContent != null) {
+                                    jsCodeBuilder.append("// Inject File: $jsFile\n")
+                                    jsCodeBuilder.append(fileContent)
+                                    jsCodeBuilder.append("\n\n")
+                                }
+                            }
+                        }
+
+                        // Extracted CSS style injects
+                        val cssArray = scriptObj.optJSONArray("css")
+                        if (cssArray != null) {
+                            for (j in 0 until cssArray.length()) {
+                                val cssFile = cssArray.getString(j).replace("\\", "/").trimStart('/')
+                                val fileContent = filesMap[cssFile] ?: filesMap.entries.firstOrNull { it.key.endsWith(cssFile) }?.value
+                                if (fileContent != null) {
+                                    cssCodeBuilder.append(fileContent)
+                                    cssCodeBuilder.append("\n")
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    // Try parsing background/scripts fallback
+                    val background = manifestJson.optJSONObject("background")
+                    val serviceWorker = background?.optString("service_worker", "") ?: ""
+                    if (serviceWorker.isNotEmpty()) {
+                        val fileContent = filesMap[serviceWorker] ?: filesMap.entries.firstOrNull { it.key.endsWith(serviceWorker) }?.value
+                        if (fileContent != null) {
+                            jsCodeBuilder.append(fileContent)
+                        }
+                    } else {
+                        val scripts = background?.optJSONArray("scripts")
+                        if (scripts != null) {
+                            for (j in 0 until scripts.length()) {
+                                val jsFile = scripts.getString(j).replace("\\", "/").trimStart('/')
+                                val fileContent = filesMap[jsFile] ?: filesMap.entries.firstOrNull { it.key.endsWith(jsFile) }?.value
+                                if (fileContent != null) {
+                                    jsCodeBuilder.append(fileContent).append("\n")
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // If CSS style codes are found, wrap them inside dynamic inline stylesheet generator script
+                val styleInjectionCode = if (cssCodeBuilder.isNotEmpty()) {
+                    val safeCssContent = cssCodeBuilder.toString()
+                        .replace("\\", "\\\\")
+                        .replace("`", "\\`")
+                        .replace("$", "\\$")
+                    """
+                    (function() {
+                        let style = document.getElementById('store-extension-css-${name.hashCode()}');
+                        if (!style) {
+                            style = document.createElement('style');
+                            style.id = 'store-extension-css-${name.hashCode()}';
+                            style.innerHTML = `${safeCssContent}`;
+                            document.head.appendChild(style);
+                        }
+                    })();
+                    """.trimIndent()
+                } else ""
+
+                val bundledScript = styleInjectionCode + "\n" + jsCodeBuilder.toString()
+
+                if (bundledScript.trim().isEmpty()) {
+                    _installExtensionState.value = InstallState.Error("This extension has no static content scripts or styles available to inject in Android WebView.")
+                    return@launch
+                }
+
+                // Inject formatted bundle script to Room DB
+                repository.addExtension(
+                    ExtensionScript(
+                        name = name,
+                        description = description,
+                        scriptContent = bundledScript,
+                        isEnabled = true,
+                        isUserAdded = true,
+                        category = "Direct Store"
+                    )
+                )
+
+                _installExtensionState.value = InstallState.Success("Extension '$name' successfully installed and activated!")
+                delay(3000)
+                _installExtensionState.value = InstallState.Idle
+            } catch (e: Exception) {
+                Log.e("TVBrowserExtensionStore", "Failed extracting extension packaging", e)
+                _installExtensionState.value = InstallState.Error("Failed to import: ${e.localizedMessage}")
+            }
         }
     }
 }
