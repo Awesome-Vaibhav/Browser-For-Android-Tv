@@ -57,6 +57,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -106,6 +107,9 @@ fun BrowserScreen(
     var webViewInstance by remember { mutableStateOf<WebView?>(null) }
     var addressInput by remember { mutableStateOf(currentUrl) }
 
+    var layoutWidthDp by remember { mutableStateOf(1280f) }
+    var layoutHeightDp by remember { mutableStateOf(720f) }
+
     // Sync address input when url changes externally
     LaunchedEffect(currentUrl) {
         addressInput = currentUrl
@@ -151,6 +155,36 @@ fun BrowserScreen(
         }
     }
 
+    fun simulateScreenTouch(x: Float, y: Float) {
+        val activity = context as? android.app.Activity
+        val decorView = activity?.window?.decorView
+        if (decorView != null) {
+            val scale = density.density
+            val rawX = x * scale
+            val rawY = y * scale
+
+            val downTime = SystemClock.uptimeMillis()
+            val eventTime = SystemClock.uptimeMillis()
+
+            val downEvent = MotionEvent.obtain(
+                downTime, eventTime,
+                MotionEvent.ACTION_DOWN, rawX, rawY, 0
+            )
+            decorView.dispatchTouchEvent(downEvent)
+
+            val upEvent = MotionEvent.obtain(
+                downTime, eventTime + 50,
+                MotionEvent.ACTION_UP, rawX, rawY, 0
+            )
+            decorView.dispatchTouchEvent(upEvent)
+
+            downEvent.recycle()
+            upEvent.recycle()
+        } else {
+            simulateWebViewTouch(x, y)
+        }
+    }
+
     // Key event dispatcher for D-pad Virtual Mouse Cursor movement and scrolling
     val focusRequester = remember { FocusRequester() }
     LaunchedEffect(Unit) {
@@ -164,6 +198,13 @@ fun BrowserScreen(
             .background(Color(0xFF121214))
             .focusRequester(focusRequester)
             .focusable()
+            .onSizeChanged { size ->
+                val densityVal = density.density
+                if (densityVal > 0f) {
+                    layoutWidthDp = size.width / densityVal
+                    layoutHeightDp = size.height / densityVal
+                }
+            }
             .onKeyEvent { keyEvent ->
                 if (activeMenu != null) return@onKeyEvent false
 
@@ -175,39 +216,37 @@ fun BrowserScreen(
                     when (keyEvent.key) {
                         Key.DirectionUp -> {
                             if (cursorMode) {
-                                // If cursor near top border, scroll webview slightly up
-                                if (cursorY < 120f) {
+                                if (cursorY > 80f && cursorY < 180f) {
                                     webViewInstance?.scrollBy(0, -150)
                                 }
-                                viewModel.moveCursor(0f, -step)
+                                viewModel.moveCursor(0f, -step, layoutWidthDp, layoutHeightDp)
                                 true
                             } else false
                         }
                         Key.DirectionDown -> {
                             if (cursorMode) {
-                                // If cursor near bottom border, scroll webview slightly down
-                                if (cursorY > 600f) {
+                                if (cursorY > layoutHeightDp - 100f) {
                                     webViewInstance?.scrollBy(0, 150)
                                 }
-                                viewModel.moveCursor(0f, step)
+                                viewModel.moveCursor(0f, step, layoutWidthDp, layoutHeightDp)
                                 true
                             } else false
                         }
                         Key.DirectionLeft -> {
                             if (cursorMode) {
-                                viewModel.moveCursor(-step, 0f)
+                                viewModel.moveCursor(-step, 0f, layoutWidthDp, layoutHeightDp)
                                 true
                             } else false
                         }
                         Key.DirectionRight -> {
                             if (cursorMode) {
-                                viewModel.moveCursor(step, 0f)
+                                viewModel.moveCursor(step, 0f, layoutWidthDp, layoutHeightDp)
                                 true
                             } else false
                         }
                         Key.DirectionCenter, Key.Enter -> {
                             if (cursorMode) {
-                                simulateWebViewTouch(cursorX, cursorY)
+                                simulateScreenTouch(cursorX, cursorY)
                                 true
                             } else false
                         }
@@ -398,34 +437,6 @@ fun BrowserScreen(
                     },
                     modifier = Modifier.fillMaxSize()
                 )
-
-                // 3. Virtual Mouse Cursor icon overlaid dynamically matching coordinates
-                if (cursorMode) {
-                    val cursorXOffset by animateDpAsState(targetValue = cursorX.dp, label = "cursorX")
-                    val cursorYOffset by animateDpAsState(targetValue = cursorY.dp, label = "cursorY")
-
-                    Box(
-                        modifier = Modifier
-                            .offset {
-                                IntOffset(
-                                    cursorXOffset.roundToPx(),
-                                    cursorYOffset.roundToPx()
-                                )
-                            }
-                            .size(28.dp)
-                    ) {
-                        // Styled highly-visible arrow pointer
-                        Icon(
-                            imageVector = Icons.Default.Navigation,
-                            contentDescription = "Virtual Cursor",
-                            tint = Color(0xFFFF5722),
-                            modifier = Modifier
-                                .rotate(315f)
-                                .size(28.dp)
-                                .shadow(8.dp, CircleShape)
-                        )
-                    }
-                }
             }
         }
 
@@ -507,13 +518,40 @@ fun BrowserScreen(
                                 viewModel.loadUrl(url)
                                 viewModel.toggleMenu(null)
                             },
-                            onInstallChromeById = { id -> viewModel.installChromeExtensionById(id) },
                             onInstallFromUrl = { url -> viewModel.installExtensionFromUrl(url) },
                             viewModel = viewModel
                         )
                         else -> {}
                     }
                 }
+            }
+        }
+
+        // 5. Virtual Mouse Cursor icon overlaid dynamically matching coordinates at outer level
+        if (cursorMode) {
+            val cursorXOffset by animateDpAsState(targetValue = cursorX.dp, label = "cursorX")
+            val cursorYOffset by animateDpAsState(targetValue = cursorY.dp, label = "cursorY")
+
+            Box(
+                modifier = Modifier
+                    .offset {
+                        IntOffset(
+                            cursorXOffset.roundToPx(),
+                            cursorYOffset.roundToPx()
+                        )
+                    }
+                    .size(28.dp)
+            ) {
+                // Styled highly-visible arrow pointer
+                Icon(
+                    imageVector = Icons.Default.Navigation,
+                    contentDescription = "Virtual Cursor",
+                    tint = Color(0xFFFF5722),
+                    modifier = Modifier
+                        .rotate(315f)
+                        .size(28.dp)
+                        .shadow(8.dp, CircleShape)
+                )
             }
         }
     }
@@ -1039,7 +1077,7 @@ fun DownloadCardItem(
     }
 }
 
-// Extensions settings menu with direct Chrome & Firefox web store installer integrations
+// Extensions settings menu with direct Firefox web store installer integrations
 @Composable
 fun ExtensionsMenu(
     extensions: List<ExtensionScript>,
@@ -1049,7 +1087,6 @@ fun ExtensionsMenu(
     onDelete: (ExtensionScript) -> Unit,
     onAddExtension: (String, String, String) -> Unit,
     onLoadUrl: (String) -> Unit,
-    onInstallChromeById: (String) -> Unit,
     onInstallFromUrl: (String) -> Unit,
     viewModel: BrowserViewModel
 ) {
@@ -1058,7 +1095,6 @@ fun ExtensionsMenu(
     var extDesc by remember { mutableStateOf("") }
     var extCode by remember { mutableStateOf("") }
 
-    var pasteChromeId by remember { mutableStateOf("") }
     var pastePackageUrl by remember { mutableStateOf("") }
 
     Column(modifier = Modifier.fillMaxSize()) {
@@ -1209,100 +1245,34 @@ fun ExtensionsMenu(
                 modifier = Modifier.weight(1f).fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
-                // Feature 1: Dynamic Smart Button if user is on Chrome Web Store Page
-                if (viewModel.isChromeExtensionUrl(currentUrl)) {
-                    val extId = viewModel.extractChromeExtensionId(currentUrl)
-                    if (extId != null) {
-                        item {
-                            Card(
-                                colors = CardDefaults.cardColors(containerColor = Color(0xFFFF9800).copy(alpha = 0.2f)),
-                                border = BorderStroke(1.dp, Color(0xFFFF9800)),
-                                shape = RoundedCornerShape(12.dp)
-                            ) {
-                                Column(
-                                    modifier = Modifier.fillMaxWidth().padding(12.dp),
-                                    horizontalAlignment = Alignment.CenterHorizontally
-                                ) {
-                                    Text(
-                                        text = "⚡ Chrome Extension Detected!",
-                                        fontSize = 13.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = Color(0xFFFF9800)
-                                    )
-                                    Spacer(modifier = Modifier.height(4.dp))
-                                    Text(
-                                        text = "Build compatible scripts directly from manifest content scripts.",
-                                        fontSize = 11.sp,
-                                        color = Color.LightGray,
-                                        textAlign = TextAlign.Center
-                                    )
-                                    Spacer(modifier = Modifier.height(10.dp))
-                                    Button(
-                                        onClick = { onInstallChromeById(extId) },
-                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF9800)),
-                                        shape = RoundedCornerShape(8.dp),
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) {
-                                        Text("Install Directly Now", color = Color.White, fontWeight = FontWeight.Bold)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Feature 2: Directory Portals for Web Stores
+                // Feature 1: Firefox AMO Directory Portal Card
                 item {
                     Text(
-                        text = "EXPLORE EXTENSIONS WEBSITES",
+                        text = "EXPLORE FIREFOX ADD-ONS",
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
                         color = Color.Gray
                     )
                     Spacer(modifier = Modifier.height(6.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    Card(
+                        onClick = { onLoadUrl("https://addons.mozilla.org/en-US/firefox/") },
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFF232529)),
+                        modifier = Modifier.fillMaxWidth().height(66.dp),
+                        shape = RoundedCornerShape(10.dp)
                     ) {
-                        // Chrome Store Directory Button
-                        Card(
-                            onClick = { onLoadUrl("https://chromewebstore.google.com") },
-                            colors = CardDefaults.cardColors(containerColor = Color(0xFF232529)),
-                            modifier = Modifier.weight(1f).height(62.dp),
-                            shape = RoundedCornerShape(10.dp)
-                        ) {
-                            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                ) {
-                                    Icon(Icons.Default.Language, "CWS", tint = Color(0xFFFF9800), modifier = Modifier.size(16.dp))
-                                    Text("Chrome Store", fontSize = 12.sp, color = Color.White, fontWeight = FontWeight.Medium)
-                                }
-                            }
-                        }
-
-                        // Firefox Store Directory Button
-                        Card(
-                            onClick = { onLoadUrl("https://addons.mozilla.org/en-US/firefox/") },
-                            colors = CardDefaults.cardColors(containerColor = Color(0xFF232529)),
-                            modifier = Modifier.weight(1f).height(62.dp),
-                            shape = RoundedCornerShape(10.dp)
-                        ) {
-                            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                ) {
-                                    Icon(Icons.Default.Language, "AMO", tint = Color(0xFFFF5722), modifier = Modifier.size(16.dp))
-                                    Text("Firefox Add-ons", fontSize = 12.sp, color = Color.White, fontWeight = FontWeight.Medium)
-                                }
+                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Icon(Icons.Default.Language, "AMO", tint = Color(0xFFFF5722), modifier = Modifier.size(20.dp))
+                                Text("Go to Firefox Add-ons Website", fontSize = 13.sp, color = Color.White, fontWeight = FontWeight.Bold)
                             }
                         }
                     }
                 }
 
-                // Feature 3: Quick Direct Store Installers (Manual Copy/Paste)
+                // Feature 2: Quick Direct Store Installers (Manual Copy/Paste)
                 item {
                     Text(
                         text = "PASTE LINK & INSTALL DIRECTLY",
@@ -1311,8 +1281,8 @@ fun ExtensionsMenu(
                         color = Color.Gray
                     )
                     Spacer(modifier = Modifier.height(8.dp))
-                    
-                    // Chrome 32-letter ID installer
+
+                    // Firefox AMO / External Link installer
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -1320,52 +1290,7 @@ fun ExtensionsMenu(
                             .background(Color(0xFF232529))
                             .padding(10.dp)
                     ) {
-                        Text("Install Chrome Extension by ID:", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            BasicTextField(
-                                value = pasteChromeId,
-                                onValueChange = { pasteChromeId = it },
-                                textStyle = TextStyle(color = Color.White, fontSize = 12.sp),
-                                cursorBrush = SolidColor(Color(0xFFFF9800)),
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .background(Color(0xFF141518), RoundedCornerShape(4.dp))
-                                    .padding(8.dp)
-                            )
-                            Button(
-                                onClick = {
-                                    val trimmed = pasteChromeId.trim()
-                                    if (trimmed.length == 32) {
-                                        onInstallChromeById(trimmed)
-                                        pasteChromeId = ""
-                                    }
-                                },
-                                enabled = pasteChromeId.trim().length == 32,
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF9800)),
-                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-                                shape = RoundedCornerShape(6.dp),
-                                modifier = Modifier.height(34.dp)
-                            ) {
-                                Text("Install", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                            }
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    // Firefox AMO / External CRX Link installer
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(Color(0xFF232529))
-                            .padding(10.dp)
-                    ) {
-                        Text("Install Firefox (.xpi) or direct package link:", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                        Text("Install Firefox (.xpi) or direct addon link:", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                         Spacer(modifier = Modifier.height(6.dp))
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
